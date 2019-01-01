@@ -7,10 +7,7 @@ import pyexiftool.exiftool as exif
 # USAGE #
 #########
 
-# * Install exiftool.
-
-# Note: Only tested with photos imported from an iPhone via USB. No idea if, and
-# how, this needs to be adjusted for iCloud use.
+# See README.md.
 
 ##########
 # CONFIG #

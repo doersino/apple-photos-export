@@ -18,7 +18,12 @@ Wanting to keep my previous archival scheme running (and having it be complete, 
 
 ## Talk is cheap. Show me (how to use) the code.
 
+1. Install `exiftool`.
+2. Install `python3`.
+
 TODO
+
+Note: Only tested with photos imported from an iPhone via USB. No idea if, and how, this needs to be adjusted for iCloud use.
 
 
 ## Notes on `photos.db` and the folder structure of `.photoslibrary`
