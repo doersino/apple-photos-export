@@ -7,6 +7,8 @@ Back when I was using an Android-powered Nexus 5 and Dropbox's "Camera Uploads" 
 
 Then I got myself an iPhone, which – in addition to "normal" photos and videos – takes live photos, HDR photos etc., for which Dropbox only uploads the "base" photo. Also, some apps such as WhatsApp store received images in the camera roll, which messes everything up. And I also wanted a JPEG version of all HEIC files for future proofing slash portability.
 
+TODO instagram: prev via manual dropbox file upload, now they also just end up in the camera roll
+
 Wanting to keep my previous archival scheme running (and having it be complete, i.e. also containing the short videos corresponding to live photos), I've come up with the following workflow:
 
 1. Connect the iPhone to my laptop.
@@ -20,6 +22,7 @@ Wanting to keep my previous archival scheme running (and having it be complete, 
 
 1. Install `exiftool`.
 2. Install `python3`.
+3. Make sure `sips` is working (this should be included in your macOS installation).
 
 TODO
 
