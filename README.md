@@ -1,5 +1,7 @@
 # apple-photos-export
 
+**Please note that this script is written to fit my (admittedly weird) use case. No care was taken to make it particularly useful to anyone else, most notably it's *not an all-purpose backup tool*. Continue reading to find out what exactly it does.**
+
 Back when I was using an Android-powered Nexus 5 and Dropbox's "Camera Uploads" feature, everything was great:
 
 1. The phone would save photos (whether HDR or not) as `.jpg`, videos as `.mp4` and screenshots as `.png`.
@@ -28,14 +30,16 @@ TODO
 
 Note: Only tested with photos imported from an iPhone via USB. No idea if, and how, this needs to be adjusted for iCloud use.
 
-Note: All of the above (and below) works/holds for whatever version of mscOS/Photos was most recent at the time of the most recent commit to this repository.
+Note: All of the above (and below) probably works/holds for whatever version of mscOS/Photos was most recent at the time of the most recent commit to this repository. Commit TODO was current in January 2019.
 
 
 ## Notes on `photos.db` and the folder structure of `.photoslibrary`
+
+As of January 2019, TODO
 
 TODO
 
 
 ## Future work
 
-* Faces.
+* # TODO faces into filenames? i don't use this (yet)

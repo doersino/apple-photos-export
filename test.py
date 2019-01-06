@@ -58,13 +58,21 @@ VERSION  = os.path.join(LIBRARY, "resources/media/version")
 
 # TODO structure: helpers, etc.
 
-def create_working_copy_of_photos_db():
-    os.makedirs(TMP, exist_ok=True)
-    shutil.copyfile(DATABASE, TMP_DB)
+# as a sanity check, keep track of number of photos processed
+TALLY = {}
+def tally(category):
+    global TALLY
+    if category not in TALLY.keys():
+        TALLY[category] = 1
+    else:
+        TALLY[category] = TALLY[category] + 1
 
-def init_target():
-    os.makedirs(TARGET, exist_ok=True)
+def stats():
+    # TODO make prettier
+    print(TALLY)
+    print(query("SELECT COUNT(*) FROM RKMaster"))
 
+# query helper
 def query(q):
     conn = sqlite3.connect(TMP_DB)
     c = conn.cursor()
@@ -73,21 +81,8 @@ def query(q):
     conn.close()
     return res
 
-def get_masters():
-    q = """
-        SELECT modelId AS id,
-               '{}' || '/' || imagePath AS absolutepath,
-               fileCreationDate AS creationdate,
-               mediaGroupId AS contentidentifier,  -- if set, need to get live photo video
-               burstUuid AS burstid,  -- if set, could group burst mode pics
-               UTI AS type,  -- public.heic, public.jpeg (whatsapp/burst/pano), com.apple.quicktime-movie, public.png, public.mpeg-4 (whatsapp movies)
-               importGroupUuid AS importid,
-               hasAttachments AS isslomoorhasjpegscreenshot
-        FROM RKMaster
-    """.format(MASTERS)
-    return query(q)
-
 def log(msg, type='status'):
+    print(" " * 80, end="\r")
     if type == "status":
         print('\033[1m' + msg + '\033[0m')
     if type == "info":
@@ -108,6 +103,27 @@ def progress(count, total, status=''):
 
     sys.stdout.write('[%s] %s%s (%s)\r' % (bar, percents, '%', status))
     sys.stdout.flush()
+
+def create_working_copy_of_photos_db():
+    os.makedirs(TMP, exist_ok=True)
+    shutil.copyfile(DATABASE, TMP_DB)
+
+def init_target():
+    os.makedirs(TARGET, exist_ok=True)
+
+# def get_masters():
+#     q = """
+#         SELECT modelId AS id,
+#                '{}' || '/' || imagePath AS absolutepath,
+#                fileCreationDate AS creationdate,
+#                mediaGroupId AS contentidentifier,  -- if set, need to get live photo video
+#                burstUuid AS burstid,  -- if set, could group burst mode pics
+#                UTI AS type,  -- public.heic, public.jpeg (whatsapp/burst/pano), com.apple.quicktime-movie, public.png, public.mpeg-4 (whatsapp movies)
+#                importGroupUuid AS importid,
+#                hasAttachments AS isslomoorhasjpegscreenshot
+#         FROM RKMaster
+#     """.format(MASTERS)
+#     return query(q)
 
 def get_live_photo_videos():
     log("Building index of live photo videos...")
@@ -158,7 +174,7 @@ def get_live_photos(vids):
             #print(videopath)
             live_idpvs.append(tuple([id, creationdate, absolutepath, videopath, selfie]))
         except KeyError:
-            log("Couldn't find video file for " + absolutepath + ", will ignore", "warn")
+            log("Couldn't find video file for " + absolutepath + ", will keep it without a video", "warn")
             live_idpvs.append(tuple([id, creationdate, absolutepath, None, selfie]))
 
     return live_idpvs
@@ -169,12 +185,10 @@ def collect_and_convert_live_photos(live_idpvs):
 
     for i, (id, creationdate, photo, video, selfie) in enumerate(live_idpvs):
         progress(i, len(live_idpvs))
+        tally("total")
 
         # assemble filename prefix
-        ts = creationdate + 977616000 + 691200  # + 31 years + 8 leap days, for whatever reason
-        datestring = datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')  # TODO maybe convert to system time zone?
-        datestring = datestring.replace(" ", "_").replace(":", "-")
-        filename_prefix = datestring + "_" + str(id) + "_"
+        filename_prefix = assemble_file_name_prefix(creationdate, id)
         if selfie:
             filename_prefix = filename_prefix + "selfie_"
 
@@ -183,19 +197,31 @@ def collect_and_convert_live_photos(live_idpvs):
         targetphoto = TARGET + "/" + filename_prefix + pre + ext.lower()
         #print(targetphoto)
         shutil.copyfile(photo, targetphoto)
+        tally("livephoto")  # TODO isn't this really just HEIC photos? i.e. shouldn't this entire thing be renamed?
 
         # create jpeg version
+        # TODO setting for quality?
         targetjpeg = TARGET + "/" + filename_prefix + pre + ".jpg"
         try:
             subprocess.check_output(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "80", photo, "--out", targetjpeg])
         except subprocess.CalledProcessError as err:
             sys.exit("sips failed: " + repr(err))
+        tally("livephotojpeg")
 
         # copy live video if it exists
         if video is not None:
             targetvideo = TARGET + "/" + filename_prefix + os.path.basename(video)
             #print(targetvideo)
             shutil.copyfile(video, targetvideo)
+            tally("livephotovideo")
+
+def assemble_file_name_prefix(creationdate, id):
+    ts = creationdate + 977616000 + 691200  # + 31 years + 8 leap days, for whatever reason
+    # TODO maybe convert to system time zone? or "taken" time zone? this info can be found in the versions table
+    datestring = datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
+    datestring = datestring.replace(" ", "_").replace(":", "-")
+    filename_prefix = datestring + "_" + str(id) + "_"
+    return filename_prefix
 
 def get_and_collect_insta_photos():
     log("Querying database for Instagram photos...")
@@ -213,6 +239,7 @@ def get_and_collect_insta_photos():
     log("Collecting Instagram photos...")
     for i, l in enumerate(instas):
         progress(i, len(instas))
+        tally("total")
 
         id = l[0]
         absolutepath = MASTERS + "/" + l[1]
@@ -220,16 +247,14 @@ def get_and_collect_insta_photos():
 
         photo = absolutepath  # TODO refactor
 
-        # assemble filename prefix  # TODO abstract this
-        ts = creationdate + 977616000 + 691200  # + 31 years + 8 leap days, for whatever reason
-        datestring = datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')  # TODO maybe convert to system time zone?
-        datestring = datestring.replace(" ", "_").replace(":", "-")
-        filename_prefix = datestring + "_" + str(id) + "_" + "instagram" + "_"
+        # assemble filename prefix
+        filename_prefix = assemble_file_name_prefix(creationdate, id) + "instagram_"
 
         # copy photo
         pre, ext = os.path.splitext(os.path.basename(photo))
         targetphoto = TARGET + "/" + filename_prefix + pre + ext.lower()
         shutil.copyfile(photo, targetphoto)
+        tally("insta")
 
         # TODO figure out how to get real date? is that even possible?
 
@@ -249,6 +274,7 @@ def get_and_collect_videos():
     log("Collecting videos and real-time, high-framerate versions of slomos...")
     for i, l in enumerate(videos):
         progress(i, len(videos))
+        tally("total")
 
         id = l[0]
         absolutepath = MASTERS + "/" + l[1]
@@ -257,11 +283,8 @@ def get_and_collect_videos():
 
         video = absolutepath  # TODO refactor
 
-        # assemble filename prefix  # TODO abstract this
-        ts = creationdate + 977616000 + 691200  # + 31 years + 8 leap days, for whatever reason
-        datestring = datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')  # TODO maybe convert to system time zone?
-        datestring = datestring.replace(" ", "_").replace(":", "-")
-        filename_prefix = datestring + "_" + str(id) + "_"
+        # assemble filename prefix
+        filename_prefix = assemble_file_name_prefix(creationdate, id)
         if attachment:
             filename_prefix = filename_prefix + "slomo_"
 
@@ -269,6 +292,7 @@ def get_and_collect_videos():
         pre, ext = os.path.splitext(os.path.basename(video))
         targetvideo = TARGET + "/" + filename_prefix + pre + ext.lower()
         shutil.copyfile(video, targetvideo)
+        tally("videos")
 
     # TODO rendered versions of slomos (see resources/media/version)
     # iff hasAttachments = 1? this also catches jpeg screenshots, good
@@ -290,11 +314,12 @@ def get_and_collect_bursts():
     """
     bursts = query(q)
 
-    # TODO RKVersion contains column burstPickType indicating which image was chosen as the "hero" image
+    # TODO RKVersion contains column burstPickType indicating (?) which image was chosen as the "hero" image
 
     log("Collecting burst photos...")
     for i, l in enumerate(bursts):
         progress(i, len(bursts))
+        tally("total")
 
         id = l[0]
         absolutepath = MASTERS + "/" + l[1]
@@ -304,21 +329,61 @@ def get_and_collect_bursts():
         photo = absolutepath  # TODO refactor
 
         # assemble filename prefix  # TODO abstract this
-        ts = creationdate + 977616000 + 691200  # + 31 years + 8 leap days, for whatever reason
-        datestring = datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')  # TODO maybe convert to system time zone?
-        datestring = datestring.replace(" ", "_").replace(":", "-")
-        filename_prefix = datestring + "_" + str(id) + "_" + "burst_" + burstid + "_"
+        filename_prefix = assemble_file_name_prefix(creationdate, id) + "burst_" + burstid + "_"
 
         # copy photo
         pre, ext = os.path.splitext(os.path.basename(photo))
         targetphoto = TARGET + "/" + filename_prefix + pre + ext.lower()
         shutil.copyfile(photo, targetphoto)
+        tally("bursts")
+
+def get_and_collect_panoramas():
+    log("Querying database for panoramas...")
+
+    q = """
+        SELECT modelId AS id,
+               imagePath AS absolutepath,
+               fileCreationDate AS creationdate
+        FROM RKMaster
+        WHERE UTI = 'public.heic'
+        AND NOT (
+           (mediaGroupId IS NOT NULL AND UTI = 'public.heic')  -- live photo
+        -- TODO following should not be necessary here?
+        --OR (mediaGroupId IS NOT NULL AND UTI = 'public.jpeg')  -- instagram photo
+        --OR (UTI = 'com.apple.quicktime-movie')  -- video
+        --OR (burstUuid IS NOT NULL)  -- burst
+        --OR (UTI = 'public.mpeg-4')  -- whatsapp movie
+        --OR (UTI = 'public.jpeg' AND burstUuid IS NULL AND mediaGroupId IS NULL)  -- whatsapp image
+        --OR (UTI = 'public.png')  -- screenshot
+        )
+    """
+    panoramas = query(q)
+
+    # TODO RKVersion contains column burstPickType indicating (?) which image was chosen as the "hero" image
+
+    log("Collecting burst photos...")
+    for i, l in enumerate(panoramas):
+        progress(i, len(panoramas))
+        tally("total")
+
+        id = l[0]
+        absolutepath = MASTERS + "/" + l[1]
+        creationdate = l[2]
+
+        photo = absolutepath  # TODO refactor
+
+        # assemble filename prefix  # TODO abstract this
+        filename_prefix = assemble_file_name_prefix(creationdate, id) + "panorama_"
+
+        # copy photo  # TODO abstract
+        pre, ext = os.path.splitext(os.path.basename(photo))
+        targetphoto = TARGET + "/" + filename_prefix + pre + ext.lower()
+        shutil.copyfile(photo, targetphoto)
+        tally("panoramas")
+
+        # TODO generate jpeg version!
 
 # TODO hdr images?
-# TODO faces into filenames?
-# TODO keep a total count of media while collecting and output at the end, or keep stats as dict {insta: 40, etc.}
-# TODO RKVersion.selfPortrait = 1 => selfie cam was used, might be handy to include that in filenames
-
 
 def get_matching_slomos(videos):
     pass
@@ -327,34 +392,19 @@ def main():
     create_working_copy_of_photos_db()
     init_target()
 
-    """
-    print(get_masters())
+    vids = get_live_photo_videos()
+    live_idpvs = get_live_photos(vids)
+    collect_and_convert_live_photos(live_idpvs)
 
-    files = [MASTERS + "/2018/12/28/20181228-132551/IMG_0037.HEIC", "/Users/noah/Pictures/Photos Library 2.photoslibrary/resources/media/master/00/00/jpegvideocomplement_1.mov"]
-    #print(files)
-    with exif.ExifTool() as et:
-        metadata = et.get_metadata_batch(files)
-    for d in metadata:
-        #print(d)
-        try:
-            print(d["MakerNotes:ContentIdentifier"])
-            #print(d["QuickTime:ContentIdentifier"])
-        except KeyError:
-            print(d["QuickTime:ContentIdentifier"])
-            pass
-    """
-
-    #vids = get_live_photo_videos()
-    #live_idpvs = get_live_photos(vids)
-    #collect_and_convert_live_photos(live_idpvs)
-
-    #get_and_collect_videos()
+    get_and_collect_videos()
 
     get_and_collect_bursts()
 
-    #get_and_collect_insta_photos()
+    get_and_collect_panoramas()
 
-    # TODO stats
+    get_and_collect_insta_photos()
+
+    stats()
 
 if __name__ == "__main__":
     main()
@@ -363,6 +413,7 @@ if __name__ == "__main__":
 # TODO prefix with type after date???
 
 # TODO then what to do about pictures left on phone? delete all non-whatsapp ones? all IMG_xxx then, but how?
+# TODO how to deal with multiple imports? add -import parameter that adds the corresponding predicate (master table has import id column) to the queries?
 
 # https://github.com/xgess/timestamp_all_photos/blob/master/app/apple_photos_library.py
 # https://github.com/SummittDweller/merge-photos-faces/blob/master/main.py
