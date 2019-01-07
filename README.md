@@ -35,6 +35,8 @@ Note: All of the above (and below) probably works/holds for whatever version of 
 
 ## Notes on `photos.db` and the folder structure of `.photoslibrary`
 
+In order to ... reverse-engineer some of the structure. This proved a bit frustrating since the database really doesn't seem to contains much detail re. discerning different types of media. At least I couldn't find a "clean" way of doing that, so my way will inevitably break on updates.
+
 As of January 2019, TODO
 
 TODO

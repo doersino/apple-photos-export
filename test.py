@@ -73,36 +73,43 @@ LIVE_PHOTO_VIDEOS = os.path.join(LIBRARY, "resources/media/master")
 # WHERE predicates for known media types, where m is RKMaster
 
 IS_PHOTO = """
-WHERE m.mediaGroupId IS NOT NULL
+m.mediaGroupId IS NOT NULL
 AND m.UTI = 'public.heic'
 """
 
 IS_VIDEO = """
-WHERE UTI = 'com.apple.quicktime-movie'
+UTI = 'com.apple.quicktime-movie'
 """
 
 IS_BURST = """
-WHERE m.UTI = 'public.jpeg'
+m.UTI = 'public.jpeg'
 AND m.burstUuid IS NOT NULL
 """
 
 IS_PANORAMA = """
-WHERE m.UTI = 'public.heic'
+m.UTI = 'public.heic'
 AND m.mediaGroupId IS NULL
+AND m.width <> m.height
+"""
+
+IS_SQUARE = """
+m.UTI = 'public.heic'
+AND m.mediaGroupId IS NULL
+AND m.width = m.height
 """
 
 IS_INSTA = """
-WHERE m.mediaGroupId IS NOT NULL
+m.mediaGroupId IS NOT NULL
 AND m.UTI = 'public.jpeg'
 """
 
 IS_SCREENSHOT = """
-WHERE m.UTI = 'public.png'
+m.UTI = 'public.png'
 AND m.filename LIKE 'IMG_%'
 """
 
 IS_WHATSAPP_PHOTO = """
-WHERE m.UTI = 'public.jpeg'
+m.UTI = 'public.jpeg'
 AND m.burstUuid IS NULL
 AND m.mediaGroupId IS NULL
 AND substr(m.filename, 9, 1) = '-'
@@ -113,7 +120,7 @@ AND length(m.filename) = 40
 """
 
 IS_WHATSAPP_VIDEO = """
-WHERE m.UTI = 'public.mpeg-4'
+m.UTI = 'public.mpeg-4'
 AND substr(m.filename, 9, 1) = '-'
 AND substr(m.filename, 14, 1) = '-'
 AND substr(m.filename, 19, 1) = '-'
@@ -211,6 +218,7 @@ def collect_and_convert_photos():
                m.mediaGroupId AS contentidentifier,
                v.selfPortrait AS selfie
         FROM RKMaster m LEFT JOIN RKVersion v ON m.uuid = v.masterUuid
+        WHERE
     """ + IS_PHOTO
     photos = query(q)
 
@@ -242,7 +250,7 @@ def collect_and_convert_photos():
             videopath = live_photo_videos[contentidentifier]
             photos2.append(tuple([id, photopath, creationdate, videopath, selfie]))
         except KeyError:
-            log("Couldn't find video file for " + photopath + ", will keep it without a video", "warn")
+            log("Couldn't find live photo video file for " + photopath + ", will keep it without a video", "warn")
             photos2.append(tuple([id, photopath, creationdate, None, selfie]))
 
     log("Collecting photos and corresponding live photo video files and creating JPEG versions...")
@@ -285,6 +293,7 @@ def collect_videos():
                m.fileCreationDate AS creationdate,
                a.filePath AS attachment
         FROM RKMaster m LEFT JOIN RKAttachment a on m.uuid = a.attachedToUuid
+        WHERE
     """ + IS_VIDEO
     videos = query(q)
 
@@ -298,7 +307,7 @@ def collect_videos():
 
         # assemble filename prefix
         filename_prefix = assemble_file_name_prefix(creationdate, id)
-        if attachment:
+        if attachment:  # TODO maybe use exiftool to look at framerate instead?
             filename_prefix = filename_prefix + "slomo_"
 
         # copy video
@@ -309,6 +318,8 @@ def collect_videos():
 
         tally("total")
         progress(i+1, len(videos), os.path.basename(videopath))
+
+# TODO timelapses: framerate 30 (instead of ~60 vs. ~240) and also: [Track1]        ComApplePhotosCaptureMode       : Time-lapse
 
 def get_matching_slomos(videos):
 
@@ -329,6 +340,7 @@ def collect_bursts():
                m.fileCreationDate AS creationdate,
                m.burstUuid AS burstid
         FROM RKMaster m
+        WHERE
     """ + IS_BURST
     bursts = query(q)
 
@@ -362,6 +374,7 @@ def collect_panoramas():
                m.imagePath AS absolutepath,
                m.fileCreationDate AS creationdate
         FROM RKMaster m
+        WHERE
     """ + IS_PANORAMA
     panoramas = query(q)
 
@@ -389,6 +402,42 @@ def collect_panoramas():
         tally("total")
         progress(i+1, len(panoramas), os.path.basename(panoramapath))
 
+def collect_squares():
+    log("Querying database for square photos...")
+
+    q = """
+        SELECT m.modelId AS id,
+               m.imagePath AS absolutepath,
+               m.fileCreationDate AS creationdate
+        FROM RKMaster m
+        WHERE
+    """ + IS_SQUARE
+    squares = query(q)
+
+    log("Collecting square photos and creating JPEG versions...")
+    progress(0, len(squares))
+    for i, l in enumerate(squares):
+        id = l[0]
+        squarepath = MASTERS + "/" + l[1]
+        creationdate = l[2]
+
+        # assemble filename prefix  # TODO abstract this
+        filename_prefix = assemble_file_name_prefix(creationdate, id) + "square_"
+
+        # copy photo  # TODO abstract
+        pre, ext = os.path.splitext(os.path.basename(squarepath))
+        targetsquarepath = filename_prefix + pre + ext.lower()
+        shutil.copyfile(squarepath, targetsquarepath)
+        tally("squares")
+
+        # create jpeg version
+        targetjpegpath = filename_prefix + pre + ".jpg"
+        jpeg_from_heic(squarepath, targetjpegpath)
+        tally("squarejpeg")
+
+        tally("total")
+        progress(i+1, len(squares), os.path.basename(squarepath))
+
 def collect_insta_photos():
     log("Querying database for Instagram photos...")
 
@@ -397,6 +446,7 @@ def collect_insta_photos():
                m.imagePath AS absolutepath,
                m.fileCreationDate AS creationdate
         FROM RKMaster m
+        WHERE
     """ + IS_INSTA
     instas = query(q)
 
@@ -422,27 +472,47 @@ def collect_insta_photos():
         # TODO figure out how to get actual date? is that even possible? => from original file creation/edit date
 
 def tally_other_known_media():
-    log("Querying database for other known kinds of images...")
+    log("Querying database for other known but irrelevant kinds of images...")
 
     log("Tallying Screenshots...", "info")
-    q = "SELECT 1 FROM RKMaster m" + IS_SCREENSHOT
+    q = "SELECT 1 FROM RKMaster m WHERE" + IS_SCREENSHOT
     screenshots = query(q)
     for l in screenshots:
         tally("screenshot")
         tally("total")
 
     log("Tallying WhatsApp images...", "info")
-    q = "SELECT 1 FROM RKMaster m" + IS_WHATSAPP_PHOTO
+    q = "SELECT 1 FROM RKMaster m WHERE" + IS_WHATSAPP_PHOTO
     whatsapp_images = query(q)
     for l in whatsapp_images:
         tally("whatsapp_image")
         tally("total")
 
     log("Tallying WhatsApp videos...", "info")
-    q = "SELECT 1 FROM RKMaster m" + IS_WHATSAPP_VIDEO
+    q = "SELECT 1 FROM RKMaster m WHERE" + IS_WHATSAPP_VIDEO
     whatsapp_videos = query(q)
     for l in whatsapp_videos:
         tally("whatsapp_video")
+        tally("total")
+
+def list_unknown_media():
+    log("Listing all unrecognized media (you'll have to copy them manually if you need them)...")
+
+    q = ("SELECT m.imagePath FROM RKMaster m WHERE NOT (("
+         + IS_PHOTO + ") OR ("
+         + IS_VIDEO + ") OR ("
+         + IS_BURST + ") OR ("
+         + IS_PANORAMA + ") OR ("
+         + IS_SQUARE + ") OR ("
+         + IS_INSTA + ") OR ("
+         + IS_SCREENSHOT + ") OR ("
+         + IS_WHATSAPP_PHOTO + ") OR ("
+         + IS_WHATSAPP_VIDEO + ") OR ("
+         + "false))")
+    unknowns = query(q)
+    for l in unknowns:
+        print(MASTERS + "/" + l[0])
+        tally("unknown")
         tally("total")
 
 def main():
@@ -461,9 +531,12 @@ def main():
     collect_videos()
     collect_bursts()
     collect_panoramas()
+    collect_squares()
     collect_insta_photos()
 
     tally_other_known_media()
+
+    list_unknown_media()
 
     stats()
 
