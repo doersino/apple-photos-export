@@ -52,11 +52,13 @@ LIVE_PHOTO_VIDEOS = os.path.join(LIBRARY, "resources/media/master")
 
 # Slomo videos actually rendered as slomos etc. (And more?)
 # Subfolders.
-VERSION  = os.path.join(LIBRARY, "resources/media/version")
+#VERSION  = os.path.join(LIBRARY, "resources/media/version")
 
 # TODO use os.path.join throughout, especially in assemble_prefix thingy
 
 ################################################################################
+
+# general SELECT statement
 
 # SELECT modelId AS id,
 #     imagePath AS absolutepath,
@@ -68,7 +70,58 @@ VERSION  = os.path.join(LIBRARY, "resources/media/version")
 #     hasAttachments AS isslomoorhasjpegscreenshot
 # FROM RKMaster
 
+# WHERE predicates for known media types, where m is RKMaster
 
+IS_PHOTO = """
+WHERE m.mediaGroupId IS NOT NULL
+AND m.UTI = 'public.heic'
+"""
+
+IS_VIDEO = """
+WHERE UTI = 'com.apple.quicktime-movie'
+"""
+
+IS_BURST = """
+WHERE m.UTI = 'public.jpeg'
+AND m.burstUuid IS NOT NULL
+"""
+
+IS_PANORAMA = """
+WHERE m.UTI = 'public.heic'
+AND m.mediaGroupId IS NULL
+"""
+
+IS_INSTA = """
+WHERE m.mediaGroupId IS NOT NULL
+AND m.UTI = 'public.jpeg'
+"""
+
+IS_SCREENSHOT = """
+WHERE m.UTI = 'public.png'
+AND m.filename LIKE 'IMG_%'
+"""
+
+IS_WHATSAPP_PHOTO = """
+WHERE m.UTI = 'public.jpeg'
+AND m.burstUuid IS NULL
+AND m.mediaGroupId IS NULL
+AND substr(m.filename, 9, 1) = '-'
+AND substr(m.filename, 14, 1) = '-'
+AND substr(m.filename, 19, 1) = '-'
+AND substr(m.filename, 24, 1) = '-'
+AND length(m.filename) = 40
+"""
+
+IS_WHATSAPP_VIDEO = """
+WHERE m.UTI = 'public.mpeg-4'
+AND substr(m.filename, 9, 1) = '-'
+AND substr(m.filename, 14, 1) = '-'
+AND substr(m.filename, 19, 1) = '-'
+AND substr(m.filename, 24, 1) = '-'
+AND length(m.filename) = 40
+"""
+
+################################################################################
 
 # as a sanity check, keep track of number of photos processed
 TALLY = {}
@@ -148,8 +201,8 @@ def create_working_copy_of_photos_db():
 def init_target():
     os.makedirs(TARGET, exist_ok=True)
 
-def get_and_collect_and_convert_live_photos():
-    log("Querying database for live photos...")
+def collect_and_convert_photos():
+    log("Querying database for photos and live photos...")
 
     q = """
         SELECT m.modelId AS id,
@@ -158,14 +211,12 @@ def get_and_collect_and_convert_live_photos():
                m.mediaGroupId AS contentidentifier,
                v.selfPortrait AS selfie
         FROM RKMaster m LEFT JOIN RKVersion v ON m.uuid = v.masterUuid
-        WHERE m.mediaGroupId IS NOT NULL
-        AND m.UTI = 'public.heic';
-    """
-    lives = query(q)
+    """ + IS_PHOTO
+    photos = query(q)
 
     log("Building index of live photo videos...")
 
-    vids = {}
+    live_photo_videos = {}
 
     mov_files = glob.iglob(LIVE_PHOTO_VIDEOS + '/**/*.mov', recursive=True)
     with exif.ExifTool() as et:
@@ -173,34 +224,30 @@ def get_and_collect_and_convert_live_photos():
         metadata = et.get_metadata_batch(mov_files)
 
     log("Looking for QuickTime:ContentIdentifier fields...", "info")
-    for i, d in enumerate(metadata):
+    for d in metadata:
         try:
-            #print(d["QuickTime:ContentIdentifier"])
-            vids[d["QuickTime:ContentIdentifier"]] = d["SourceFile"]
+            live_photo_videos[d["QuickTime:ContentIdentifier"]] = d["SourceFile"]
         except KeyError:
             log("Couldn't find QuickTime:ContentIdentifier field for " + d["System:FileName"] + ", will ignore", "warn")
 
     log("Matching live photos with corresponding video files...")
-    live_idpvs = [] # id, date, photo file, video file
-    for l in lives:
+    photos2 = [] # id, date, photo file, video file
+    for l in photos:
         id = l[0]
-        absolutepath = MASTERS + "/" + l[1]
+        photopath = MASTERS + "/" + l[1]
         creationdate = l[2]
         contentidentifier = l[3]
         selfie = bool(l[4])
-        #print(selfie)
-        #print(absolutepath)
         try:
-            videopath = vids[contentidentifier]
-            #print(videopath)
-            live_idpvs.append(tuple([id, creationdate, absolutepath, videopath, selfie]))
+            videopath = live_photo_videos[contentidentifier]
+            photos2.append(tuple([id, photopath, creationdate, videopath, selfie]))
         except KeyError:
-            log("Couldn't find video file for " + absolutepath + ", will keep it without a video", "warn")
-            live_idpvs.append(tuple([id, creationdate, absolutepath, None, selfie]))
+            log("Couldn't find video file for " + photopath + ", will keep it without a video", "warn")
+            photos2.append(tuple([id, photopath, creationdate, None, selfie]))
 
-    log("Collecting live photos and corresponding video files and creating JPEG versions...")
-    progress(0, len(live_idpvs))
-    for i, (id, creationdate, photo, video, selfie) in enumerate(live_idpvs):
+    log("Collecting photos and corresponding live photo video files and creating JPEG versions...")
+    progress(0, len(photos2))
+    for i, (id, photopath, creationdate, videopath, selfie) in enumerate(photos2):
 
         # assemble filename prefix
         filename_prefix = assemble_file_name_prefix(creationdate, id)
@@ -208,64 +255,28 @@ def get_and_collect_and_convert_live_photos():
             filename_prefix = filename_prefix + "selfie_"
 
         # copy photo
-        pre, ext = os.path.splitext(os.path.basename(photo))
-        targetphoto = filename_prefix + pre + ext.lower()
-        #print(targetphoto)
-        shutil.copyfile(photo, targetphoto)
+        pre, ext = os.path.splitext(os.path.basename(photopath))
+        targetphotopath = filename_prefix + pre + ext.lower()
+        shutil.copyfile(photopath, targetphotopath)
         tally("livephoto")  # TODO isn't this really just HEIC photos? i.e. shouldn't this entire thing be renamed?
 
         # create jpeg version
-        targetjpeg = filename_prefix + pre + ".jpg"
-        jpeg_from_heic(photo, targetjpeg)
+        targetjpegpath = filename_prefix + pre + ".jpg"
+        jpeg_from_heic(photopath, targetjpegpath)
         tally("livephotojpeg")
 
         # copy live video if it exists
-        if video is not None:
-            targetvideo = filename_prefix + os.path.basename(video)
-            #print(targetvideo)
-            shutil.copyfile(video, targetvideo)
+        if videopath is not None:
+            targetvideopath = filename_prefix + os.path.basename(videopath)
+            shutil.copyfile(videopath, targetvideopath)
             tally("livephotovideo")
 
         tally("total")
-        progress(i+1, len(live_idpvs), os.path.basename(photo))
+        progress(i+1, len(photos2), os.path.basename(photopath))
 
-def get_and_collect_insta_photos():
-    log("Querying database for Instagram photos...")
+    # hdr images are already "baked in", the non-hdr version seems not to be gettable
 
-    q = """
-        SELECT modelId AS id,
-               imagePath AS absolutepath,
-               fileCreationDate AS creationdate
-        FROM RKMaster
-        WHERE mediaGroupId IS NOT NULL
-        AND UTI = 'public.jpeg';
-    """
-    instas = query(q)
-
-    log("Collecting Instagram photos...")
-    progress(0, len(instas))
-    for i, l in enumerate(instas):
-        id = l[0]
-        absolutepath = MASTERS + "/" + l[1]
-        creationdate = l[2]
-
-        photo = absolutepath  # TODO refactor
-
-        # assemble filename prefix
-        filename_prefix = assemble_file_name_prefix(creationdate, id) + "instagram_"
-
-        # copy photo
-        pre, ext = os.path.splitext(os.path.basename(photo))
-        targetphoto = filename_prefix + pre + ext.lower()
-        shutil.copyfile(photo, targetphoto)
-        tally("insta")
-
-        tally("total")
-        progress(i+1, len(instas))
-
-        # TODO figure out how to get real date? is that even possible?
-
-def get_and_collect_videos():
+def collect_videos():
     log("Querying database for videos...")
 
     q = """
@@ -274,19 +285,16 @@ def get_and_collect_videos():
                m.fileCreationDate AS creationdate,
                a.filePath AS attachment
         FROM RKMaster m LEFT JOIN RKAttachment a on m.uuid = a.attachedToUuid
-        WHERE UTI = 'com.apple.quicktime-movie';
-    """
+    """ + IS_VIDEO
     videos = query(q)
 
     log("Collecting videos and real-time, high-framerate versions of slomos...")
     progress(0, len(videos))
     for i, l in enumerate(videos):
         id = l[0]
-        absolutepath = MASTERS + "/" + l[1]
+        videopath = MASTERS + "/" + l[1]
         creationdate = l[2]
         attachment = l[3]
-
-        video = absolutepath  # TODO refactor
 
         # assemble filename prefix
         filename_prefix = assemble_file_name_prefix(creationdate, id)
@@ -294,13 +302,13 @@ def get_and_collect_videos():
             filename_prefix = filename_prefix + "slomo_"
 
         # copy video
-        pre, ext = os.path.splitext(os.path.basename(video))
-        targetvideo = filename_prefix + pre + ext.lower()
-        shutil.copyfile(video, targetvideo)
+        pre, ext = os.path.splitext(os.path.basename(videopath))
+        targetvideopath = filename_prefix + pre + ext.lower()
+        shutil.copyfile(videopath, targetvideopath)
         tally("videos")
 
         tally("total")
-        progress(i+1, len(videos))
+        progress(i+1, len(videos), os.path.basename(videopath))
 
 def get_matching_slomos(videos):
 
@@ -312,17 +320,16 @@ def get_matching_slomos(videos):
 
     pass
 
-def get_and_collect_bursts():
+def collect_bursts():
     log("Querying database for burst photos...")
 
     q = """
-        SELECT modelId AS id,
-               imagePath AS absolutepath,
-               fileCreationDate AS creationdate,
-               burstUuid AS burstid
-        FROM RKMaster
-        WHERE burstUuid IS NOT NULL
-    """
+        SELECT m.modelId AS id,
+               m.imagePath AS absolutepath,
+               m.fileCreationDate AS creationdate,
+               m.burstUuid AS burstid
+        FROM RKMaster m
+    """ + IS_BURST
     bursts = query(q)
 
     # TODO RKVersion contains column burstPickType indicating (?) which image was chosen as the "hero" image
@@ -331,101 +338,139 @@ def get_and_collect_bursts():
     progress(0, len(bursts))
     for i, l in enumerate(bursts):
         id = l[0]
-        absolutepath = MASTERS + "/" + l[1]
+        burstpath = MASTERS + "/" + l[1]
         creationdate = l[2]
         burstid = l[3]
-
-        photo = absolutepath  # TODO refactor
 
         # assemble filename prefix
         filename_prefix = assemble_file_name_prefix(creationdate, id) + "burst_" + burstid + "_"
 
         # copy photo
-        pre, ext = os.path.splitext(os.path.basename(photo))
-        targetphoto = filename_prefix + pre + ext.lower()
-        shutil.copyfile(photo, targetphoto)
+        pre, ext = os.path.splitext(os.path.basename(burstpath))
+        targetburstpath = filename_prefix + pre + ext.lower()
+        shutil.copyfile(burstpath, targetburstpath)
         tally("bursts")
 
         tally("total")
-        progress(i+1, len(bursts))
+        progress(i+1, len(bursts), os.path.basename(burstpath))
 
-def get_and_collect_panoramas():
+def collect_panoramas():
     log("Querying database for panoramas...")
 
     q = """
-        SELECT modelId AS id,
-               imagePath AS absolutepath,
-               fileCreationDate AS creationdate
-        FROM RKMaster
-        WHERE UTI = 'public.heic'
-        AND NOT (
-           (mediaGroupId IS NOT NULL AND UTI = 'public.heic')  -- live photo
-        -- TODO following should not be necessary here?
-        --OR (mediaGroupId IS NOT NULL AND UTI = 'public.jpeg')  -- instagram photo
-        --OR (UTI = 'com.apple.quicktime-movie')  -- video
-        --OR (burstUuid IS NOT NULL)  -- burst
-        --OR (UTI = 'public.mpeg-4')  -- whatsapp movie
-        --OR (UTI = 'public.jpeg' AND burstUuid IS NULL AND mediaGroupId IS NULL)  -- whatsapp image
-        --OR (UTI = 'public.png')  -- screenshot
-        )
-    """
+        SELECT m.modelId AS id,
+               m.imagePath AS absolutepath,
+               m.fileCreationDate AS creationdate
+        FROM RKMaster m
+    """ + IS_PANORAMA
     panoramas = query(q)
 
     log("Collecting panoramas and creating JPEG versions...")
     progress(0, len(panoramas))
     for i, l in enumerate(panoramas):
         id = l[0]
-        absolutepath = MASTERS + "/" + l[1]
+        panoramapath = MASTERS + "/" + l[1]
         creationdate = l[2]
-
-        photo = absolutepath  # TODO refactor
 
         # assemble filename prefix  # TODO abstract this
         filename_prefix = assemble_file_name_prefix(creationdate, id) + "panorama_"
 
         # copy photo  # TODO abstract
-        pre, ext = os.path.splitext(os.path.basename(photo))
-        targetphoto = filename_prefix + pre + ext.lower()
-        shutil.copyfile(photo, targetphoto)
+        pre, ext = os.path.splitext(os.path.basename(panoramapath))
+        targetpanoramapath = filename_prefix + pre + ext.lower()
+        shutil.copyfile(panoramapath, targetpanoramapath)
         tally("panoramas")
 
-        # TODO generate jpeg version!
-
         # create jpeg version
-        targetjpeg = filename_prefix + pre + ".jpg"
-        jpeg_from_heic(photo, targetjpeg)
+        targetjpegpath = filename_prefix + pre + ".jpg"
+        jpeg_from_heic(panoramapath, targetjpegpath)
         tally("panoramajpeg")
 
         tally("total")
-        progress(i+1, len(panoramas))
+        progress(i+1, len(panoramas), os.path.basename(panoramapath))
 
-def count_up_other_known_kinds_of_images():
-    log("Querying database for WhatsApp images and videos...")
-    # TODO etc., tally()
+def collect_insta_photos():
+    log("Querying database for Instagram photos...")
 
-# TODO hdr images?
+    q = """
+        SELECT m.modelId AS id,
+               m.imagePath AS absolutepath,
+               m.fileCreationDate AS creationdate
+        FROM RKMaster m
+    """ + IS_INSTA
+    instas = query(q)
+
+    log("Collecting Instagram photos...")
+    progress(0, len(instas))
+    for i, l in enumerate(instas):
+        id = l[0]
+        instapath = MASTERS + "/" + l[1]
+        creationdate = l[2]
+
+        # assemble filename prefix
+        filename_prefix = assemble_file_name_prefix(creationdate, id) + "instagram_"
+
+        # copy photo
+        pre, ext = os.path.splitext(os.path.basename(instapath))
+        targetinstapath = filename_prefix + pre + ext.lower()
+        shutil.copyfile(instapath, targetinstapath)
+        tally("insta")
+
+        tally("total")
+        progress(i+1, len(instas), os.path.basename(instapath))
+
+        # TODO figure out how to get actual date? is that even possible? => from original file creation/edit date
+
+def tally_other_known_media():
+    log("Querying database for other known kinds of images...")
+
+    log("Tallying Screenshots...", "info")
+    q = "SELECT 1 FROM RKMaster m" + IS_SCREENSHOT
+    screenshots = query(q)
+    for l in screenshots:
+        tally("screenshot")
+        tally("total")
+
+    log("Tallying WhatsApp images...", "info")
+    q = "SELECT 1 FROM RKMaster m" + IS_WHATSAPP_PHOTO
+    whatsapp_images = query(q)
+    for l in whatsapp_images:
+        tally("whatsapp_image")
+        tally("total")
+
+    log("Tallying WhatsApp videos...", "info")
+    q = "SELECT 1 FROM RKMaster m" + IS_WHATSAPP_VIDEO
+    whatsapp_videos = query(q)
+    for l in whatsapp_videos:
+        tally("whatsapp_video")
+        tally("total")
 
 def main():
     create_working_copy_of_photos_db()
+
     init_target()
 
-    # TODO store most recent import uuid or a set of all of them in metadata file, then proceed based on that (only export newer photos) if it‘s present. also keep cache of video metadata in there?
-    # TODO "that means you've run this thingy most recently between x and y (can get this info based on grouping by import id and getting min/mix timestamp for the newest known and oldest unknown). correct?"
+    # TODO store most recent import uuid or a set of all of them in metadata
+    # file (read in init_target()), then proceed based on that (only export newer
+    # photos) if it‘s present. also keep cache of video metadata in there maybe?
+    # TODO "that means you've run this thingy most recently between x and y (can
+    # get this info based on grouping by import id and getting min/mix timestamp
+    # for the newest known and oldest unknown). correct?"
 
-    get_and_collect_and_convert_live_photos()  # TODO just "photos"
-    get_and_collect_videos()
-    get_and_collect_bursts()
-    get_and_collect_panoramas()
-    get_and_collect_insta_photos()
+    collect_and_convert_photos()
+    collect_videos()
+    collect_bursts()
+    collect_panoramas()
+    collect_insta_photos()
 
-    count_up_other_known_kinds_of_images()
+    tally_other_known_media()
 
     stats()
 
 if __name__ == "__main__":
     main()
 
-# TODO what to do about screenshots, whatsapp pics, other random pics, vids, non-live photos etc.?
+# TODO what to do about screenshots, whatsapp pics, other random pics, non-live photos etc.?
 
 # TODO then what to do about pictures left on phone? delete all non-whatsapp ones? all IMG_xxx then, but how?
 # TODO how to deal with multiple imports? add -import parameter that adds the corresponding predicate (master table has import id column) to the queries?
