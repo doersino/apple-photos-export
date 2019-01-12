@@ -496,7 +496,7 @@ def tally_other_known_media():
         tally("total")
 
 def list_unknown_media():
-    log("Listing all unrecognized media (you'll have to copy them manually if you need them)...")
+    log("The following media could not be categorized (you'll have to copy these manually if you need them)...")
 
     q = ("SELECT m.imagePath FROM RKMaster m WHERE NOT (("
          + IS_PHOTO + ") OR ("
