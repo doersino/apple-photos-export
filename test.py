@@ -4,6 +4,7 @@ import glob
 import shutil
 import subprocess
 import sqlite3
+import atexit
 from datetime import datetime
 from argparse import ArgumentParser
 
@@ -27,23 +28,36 @@ def log(msg, type='status'):
 
 # based on https://gist.github.com/vladignatyev/06860ec2040cb497f0f3
 # TODO add proper license etc.
+PREVIOUS_PROGRESS_BAR_LENGTH = 0
 def progress(count, total, status=''):
+    global PREVIOUS_PROGRESS_BAR_LENGTH
+
+    # don't print empty progress bars
     if total == 0:
         return
 
-    bar_len = 60
+    # erase previous progres bar (\b moves cursor one character backward)
+    sys.stdout.write('\b' * PREVIOUS_PROGRESS_BAR_LENGTH
+                     +  ' ' * PREVIOUS_PROGRESS_BAR_LENGTH
+                     + '\b' * PREVIOUS_PROGRESS_BAR_LENGTH)
+
+    # print progress bar
+    bar_len = 50
     filled_len = int(round(bar_len * count / float(total)))
 
     bar = '=' * filled_len + '-' * (bar_len - filled_len)
     percents = round(100.0 * count / float(total), 1)
     items = str(count) + "/" + str(total)
 
-    sys.stdout.write('[%s] %s%s (%s)' % (bar, percents, '%', items))
+    progress_bar = '[%s] %s%s (%s)' % (bar, percents, '%', items)
     if status:
-        sys.stdout.write(' -> %s' % (status))
-    sys.stdout.write('\r')
-    sys.stdout.flush()
+        progress_bar = progress_bar +' -> %s' % (status)
+    sys.stdout.write(progress_bar + '\r')
 
+    # store length of current progress bar for future erasing
+    PREVIOUS_PROGRESS_BAR_LENGTH = len(progress_bar)
+
+    # print newline upon completion to prevent overwriting by subsequent output
     if count == total:
         sys.stdout.write('\n')
         sys.stdout.flush()
@@ -53,7 +67,7 @@ def progress(count, total, status=''):
 # PARSE ARGUMENTS & CONFIG #
 ############################
 
-log("TODO parsing arguments")
+log("Parsing arguments...")
 parser = ArgumentParser()
 parser.add_argument("target", metavar="TARGET", type=str, help="target directory (should also contain configuration)")
 parser.add_argument("-q", "--quiet", action="store_false", dest="verbose", default=True, help="don't print status messages to stdout")
@@ -65,7 +79,7 @@ TARGET = args.target
 # Do not print any non-warning, non-error output?
 VERBOSE = args.verbose
 
-log("TODO parsing config file")
+log("Parsing configuration file, thereby also checking if target exists...")
 CONFIG = os.path.join(TARGET, "apple-photos-export.ini")
 conf = configparser.ConfigParser()
 conf.read(CONFIG)
@@ -190,9 +204,14 @@ def query(q):
     conn.close()
     return res
 
-def get_relevant_import_groups():
-    log("Reading list of already-processed Apple Photos imports...")
+def pred(*preds):
+    return " WHERE (" + ") AND (".join(preds) + ")"
 
+# TODO also keep cache of video metadata in this file – will cut down on long wait right at the start
+def get_relevant_import_groups():
+    log("Processing list of already-exported Apple Photos imports...")
+
+    log("Reading list...", "info")
     ignore_import_groups = []
     try:
         with open(os.path.join(TARGET, "apple-photos-export.lst"), "r") as lst:
@@ -200,20 +219,22 @@ def get_relevant_import_groups():
     except FileNotFoundError:
         pass
 
+    log("Querying database for all import groups...", "info")
     #q = "SELECT DISTINCT ig.uuid FROM RKImportGroup ig"  # sometimes import groups apparently get culled from this table by Photos.app?
     q = "SELECT DISTINCT m.importGroupUuid FROM RKMaster m"
     import_groups = query(q)
 
+    log("Filtering out already-processed import groups...", "info")
     global ONLY_RELEVANT_IMPORT_GROUPS
     for l in import_groups:
         if l[0] not in ignore_import_groups:
             ONLY_RELEVANT_IMPORT_GROUPS.append(l[0])
 
-    print(ignore_import_groups)
-    print(ONLY_RELEVANT_IMPORT_GROUPS)
+    #print(ignore_import_groups)
+    #print(ONLY_RELEVANT_IMPORT_GROUPS)
 
 def only_relevant_import_groups_sql():
-    return "AND m.importGroupUuid IN (" + ','.join(["'" + g + "'" for g in ONLY_RELEVANT_IMPORT_GROUPS]) + ")"
+    return "m.importGroupUuid IN (" + ','.join(["'" + g + "'" for g in ONLY_RELEVANT_IMPORT_GROUPS]) + ")"
 
 def write_processed_import_groups():
     log("Updating list of already-processed Apple Photos imports...")
@@ -242,8 +263,7 @@ def stats():
     q = """
         SELECT COUNT(*)
         FROM RKMaster m
-        WHERE true
-    """ + only_relevant_import_groups_sql()
+    """ + pred(only_relevant_import_groups_sql())
     items = query(q)[0][0]
     print(items)
 
@@ -294,12 +314,14 @@ def persist_files_to_target():
         directory = os.path.dirname(targetpath)
         os.makedirs(directory, exist_ok=True)
         shutil.copyfile(tmppath, targetpath)
+        # log("The file" + targetpath + " already existed, I overwrote it, "warn")
         progress(i+1, len(TMP_FILES), os.path.basename(tmppath))
 
 def clean_up():
     log("Cleaning up...")
     log("Removing " + TMP + "...", "info")
-    shutil.rmtree(TMP)
+    if os.path.isdir(TMP):
+        shutil.rmtree(TMP)
 
 def create_working_copy_of_photos_db():
     os.makedirs(TMP, exist_ok=True)
@@ -315,8 +337,7 @@ def collect_and_convert_photos():
                m.mediaGroupId AS contentidentifier,
                v.selfPortrait AS selfie
         FROM RKMaster m LEFT JOIN RKVersion v ON m.uuid = v.masterUuid
-        WHERE
-    """ + IS_PHOTO + only_relevant_import_groups_sql()
+    """ + pred(IS_PHOTO, only_relevant_import_groups_sql())
     photos = query(q)
 
     log("Building index of live photo videos...")
@@ -383,8 +404,7 @@ def collect_videos():
                m.fileCreationDate AS creationdate,
                a.filePath AS attachment
         FROM RKMaster m LEFT JOIN RKAttachment a on m.uuid = a.attachedToUuid
-        WHERE
-    """ + IS_VIDEO + only_relevant_import_groups_sql()
+    """ + pred(IS_VIDEO, only_relevant_import_groups_sql())
     videos = query(q)
 
     log("Collecting videos and real-time, high-framerate versions of slomos...")
@@ -428,8 +448,7 @@ def collect_bursts():
                m.fileCreationDate AS creationdate,
                m.burstUuid AS burstid
         FROM RKMaster m
-        WHERE
-    """ + IS_BURST + only_relevant_import_groups_sql()
+    """ + pred(IS_BURST, only_relevant_import_groups_sql())
     bursts = query(q)
 
     # TODO RKVersion contains column burstPickType indicating (?) which image was chosen as the "hero" image
@@ -460,8 +479,7 @@ def collect_panoramas():
                m.imagePath AS absolutepath,
                m.fileCreationDate AS creationdate
         FROM RKMaster m
-        WHERE
-    """ + IS_PANORAMA + only_relevant_import_groups_sql()
+    """ + pred(IS_PANORAMA, only_relevant_import_groups_sql())
     panoramas = query(q)
 
     log("Collecting panoramas and creating JPEG versions...")
@@ -490,8 +508,7 @@ def collect_squares():
                m.imagePath AS absolutepath,
                m.fileCreationDate AS creationdate
         FROM RKMaster m
-        WHERE
-    """ + IS_SQUARE + only_relevant_import_groups_sql()
+    """ + pred(IS_SQUARE, only_relevant_import_groups_sql())
     squares = query(q)
 
     log("Collecting square photos and creating JPEG versions...")
@@ -520,8 +537,7 @@ def collect_insta_photos():
                m.imagePath AS absolutepath,
                m.fileCreationDate AS creationdate
         FROM RKMaster m
-        WHERE
-    """ + IS_INSTA + only_relevant_import_groups_sql()
+    """ + pred(IS_INSTA, only_relevant_import_groups_sql())
     instas = query(q)
 
     log("Collecting Instagram photos...")
@@ -547,21 +563,21 @@ def tally_other_known_media():
     log("Querying database for other known but irrelevant kinds of images...")
 
     log("Tallying Screenshots...", "info")
-    q = "SELECT 1 FROM RKMaster m WHERE" + IS_SCREENSHOT + only_relevant_import_groups_sql()
+    q = "SELECT 1 FROM RKMaster m" + pred(IS_SCREENSHOT, only_relevant_import_groups_sql())
     screenshots = query(q)
     for l in screenshots:
         tally("screenshot")
         tally("total")
 
     log("Tallying WhatsApp images...", "info")
-    q = "SELECT 1 FROM RKMaster m WHERE" + IS_WHATSAPP_PHOTO + only_relevant_import_groups_sql()
+    q = "SELECT 1 FROM RKMaster m" + pred(IS_WHATSAPP_PHOTO, only_relevant_import_groups_sql())
     whatsapp_images = query(q)
     for l in whatsapp_images:
         tally("whatsapp_image")
         tally("total")
 
     log("Tallying WhatsApp videos...", "info")
-    q = "SELECT 1 FROM RKMaster m WHERE" + IS_WHATSAPP_VIDEO + only_relevant_import_groups_sql()
+    q = "SELECT 1 FROM RKMaster m" + pred(IS_WHATSAPP_VIDEO, only_relevant_import_groups_sql())
     whatsapp_videos = query(q)
     for l in whatsapp_videos:
         tally("whatsapp_video")
@@ -570,16 +586,17 @@ def tally_other_known_media():
 def list_unknown_media():
     log("The following media could not be categorized (you'll have to copy these manually if you need them)...")
 
-    q = ("SELECT m.imagePath FROM RKMaster m WHERE NOT (("
-         + IS_PHOTO + ") OR ("
-         + IS_VIDEO + ") OR ("
-         + IS_BURST + ") OR ("
-         + IS_PANORAMA + ") OR ("
-         + IS_SQUARE + ") OR ("
-         + IS_INSTA + ") OR ("
-         + IS_SCREENSHOT + ") OR ("
-         + IS_WHATSAPP_PHOTO + ") OR ("
-         + IS_WHATSAPP_VIDEO + "))" + only_relevant_import_groups_sql())
+    q = "SELECT m.imagePath FROM RKMaster m" + pred(
+        "NOT" + IS_PHOTO,
+        "NOT" + IS_VIDEO,
+        "NOT" + IS_BURST,
+        "NOT" + IS_PANORAMA,
+        "NOT" + IS_SQUARE,
+        "NOT" + IS_INSTA,
+        "NOT" + IS_SCREENSHOT,
+        "NOT" + IS_WHATSAPP_PHOTO,
+        "NOT" + IS_WHATSAPP_VIDEO,
+        only_relevant_import_groups_sql())
     unknowns = query(q)
     for l in unknowns:
         print(MASTERS + "/" + l[0])
@@ -587,19 +604,17 @@ def list_unknown_media():
         tally("total")
 
 def main():
+    atexit.register(clean_up)
+
     create_working_copy_of_photos_db()
 
     get_relevant_import_groups()
-    print(only_relevant_import_groups_sql())
 
-    # TODO store most recent import uuid or a set of all of them in metadata
-    # file (read in init_target()), then proceed based on that (only export newer
-    # photos) if it‘s present. also keep cache of video metadata in there maybe?
     # TODO "that means you've run this thingy most recently between x and y (can
     # get this info based on grouping by import id and getting min/mix timestamp
-    # for the newest known and oldest unknown). correct?"
+    # for the newest known and oldest unknown)"
 
-    #collect_and_convert_photos()
+    collect_and_convert_photos()
     collect_videos()
     collect_bursts()
     collect_panoramas()
@@ -623,11 +638,5 @@ def main():
 if __name__ == "__main__":
     main()
 
-# TODO what to do about screenshots, whatsapp pics, other random pics, non-live photos etc.?
-
 # TODO then what to do about pictures left on phone? delete all non-whatsapp ones? all IMG_xxx then, but how?
-# TODO how to deal with multiple imports? add -import parameter that adds the corresponding predicate (master table has import id column) to the queries?
-
-# https://github.com/xgess/timestamp_all_photos/blob/master/app/apple_photos_library.py
-# https://github.com/SummittDweller/merge-photos-faces/blob/master/main.py
 
