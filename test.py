@@ -2,37 +2,79 @@ import os
 import sys
 import glob
 import shutil
-import sqlite3
 import subprocess
+import sqlite3
+from datetime import datetime
+from argparse import ArgumentParser
+
+import configparser
 import pyexiftool.exiftool as exif
 
-from datetime import datetime
+###########
+# HELPERS #
+###########
 
-# TODO cleanup imports, really only import required functions
+def log(msg, type='status'):
+    print(" " * 80, end="\r")
+    if type == "status":
+        print('\033[1m' + msg + '\033[0m')
+    if type == "info":
+        print(msg)
+    if type == "warn":
+        print('\033[38;5;208m' + "⚠️  " + msg + '\033[0m')
+    if type == "error":
+        sys.exit('\033[31m' + "❌  " + msg + '\033[0m')
 
-######################
-# USAGE & BACKGROUND #
-######################
+# based on https://gist.github.com/vladignatyev/06860ec2040cb497f0f3
+# TODO add proper license etc.
+def progress(count, total, status=''):
+    if total == 0:
+        return
 
-# See README.md.
+    bar_len = 60
+    filled_len = int(round(bar_len * count / float(total)))
 
-##########
-# CONFIG #
-##########
+    bar = '=' * filled_len + '-' * (bar_len - filled_len)
+    percents = round(100.0 * count / float(total), 1)
+    items = str(count) + "/" + str(total)
 
-# Absolute path to the .photoslibrary package.
-LIBRARY = "/Users/noah/Pictures/Photos Library 2.photoslibrary"
+    sys.stdout.write('[%s] %s%s (%s)' % (bar, percents, '%', items))
+    if status:
+        sys.stdout.write(' -> %s' % (status))
+    sys.stdout.write('\r')
+    sys.stdout.flush()
 
-# Temporary storage.
-TMP = "/tmp/apple-photos-export"
+    if count == total:
+        sys.stdout.write('\n')
+        sys.stdout.flush()
+
+
+############################
+# PARSE ARGUMENTS & CONFIG #
+############################
+
+log("TODO parsing arguments")
+parser = ArgumentParser()
+parser.add_argument("target", metavar="TARGET", type=str, help="target directory (should also contain configuration)")
+parser.add_argument("-q", "--quiet", action="store_false", dest="verbose", default=True, help="don't print status messages to stdout")
+args = parser.parse_args()
 
 # Target folder.
-TARGET = "/Users/noah/Desktop/photos_phone"
+TARGET = args.target
 
-# Output verbosity.
-VERBOSE = True  # TODO respect this parameter
+# Do not print any non-warning, non-error output?
+VERBOSE = args.verbose
 
-################################################################################
+log("TODO parsing config file")
+CONFIG = os.path.join(TARGET, "apple-photos-export.ini")
+conf = configparser.ConfigParser()
+conf.read(CONFIG)
+
+# Absolute path to the .photoslibrary package.
+LIBRARY = conf["Paths"]["ApplePhotosLibrary"]
+
+# Temporary storage.
+TMP = conf["Paths"]["TemporaryStorage"]
 
 # Path to "photos.db".
 DATABASE = os.path.join(LIBRARY, "database/photos.db")
@@ -50,13 +92,24 @@ MASTERS = os.path.join(LIBRARY, "Masters")
 # Subfolders.
 LIVE_PHOTO_VIDEOS = os.path.join(LIBRARY, "resources/media/master")
 
-# Slomo videos actually rendered as slomos etc. (And more?)
-# Subfolders.
+# TODO Slomo videos actually rendered as slomos etc. (And more?) In subfolders.
 #VERSION  = os.path.join(LIBRARY, "resources/media/version")
 
-# TODO use os.path.join throughout, especially in assemble_prefix thingy
+# Import groups to be ignored (i.e. those that have already been processed).
+ONLY_RELEVANT_IMPORT_GROUPS = []
 
-################################################################################
+# Media files written to temporary storage. If the user confirms that everything
+# went smoothly, these will be copied to the TARGET.
+TMP_FILES = []
+
+
+########
+# TODO #
+########
+
+# TODO cleanup imports, really only import required functions
+
+# TODO use os.path.join throughout, especially in assemble_prefix thingy
 
 # general SELECT statement
 
@@ -70,7 +123,7 @@ LIVE_PHOTO_VIDEOS = os.path.join(LIBRARY, "resources/media/master")
 #     hasAttachments AS isslomoorhasjpegscreenshot
 # FROM RKMaster
 
-# WHERE predicates for known media types, where m is RKMaster
+# WHERE predicates for known media types (where m is RKMaster)
 
 IS_PHOTO = """
 m.mediaGroupId IS NOT NULL
@@ -108,27 +161,66 @@ m.UTI = 'public.png'
 AND m.filename LIKE 'IMG_%'
 """
 
+IS_WHATSAPP = """
+AND substr(m.filename, 9, 1) = '-'
+AND substr(m.filename, 14, 1) = '-'
+AND substr(m.filename, 19, 1) = '-'
+AND substr(m.filename, 24, 1) = '-'
+AND length(m.filename) = 40
+"""
+
 IS_WHATSAPP_PHOTO = """
 m.UTI = 'public.jpeg'
 AND m.burstUuid IS NULL
 AND m.mediaGroupId IS NULL
-AND substr(m.filename, 9, 1) = '-'
-AND substr(m.filename, 14, 1) = '-'
-AND substr(m.filename, 19, 1) = '-'
-AND substr(m.filename, 24, 1) = '-'
-AND length(m.filename) = 40
-"""
+""" + IS_WHATSAPP
 
 IS_WHATSAPP_VIDEO = """
 m.UTI = 'public.mpeg-4'
-AND substr(m.filename, 9, 1) = '-'
-AND substr(m.filename, 14, 1) = '-'
-AND substr(m.filename, 19, 1) = '-'
-AND substr(m.filename, 24, 1) = '-'
-AND length(m.filename) = 40
-"""
+""" + IS_WHATSAPP
 
 ################################################################################
+
+# query helper
+def query(q):
+    conn = sqlite3.connect(TMP_DB)
+    c = conn.cursor()
+    c.execute(q)
+    res = list(c)
+    conn.close()
+    return res
+
+def get_relevant_import_groups():
+    log("Reading list of already-processed Apple Photos imports...")
+
+    ignore_import_groups = []
+    try:
+        with open(os.path.join(TARGET, "apple-photos-export.lst"), "r") as lst:
+            ignore_import_groups = [line.strip() for line in lst.readlines()]
+    except FileNotFoundError:
+        pass
+
+    #q = "SELECT DISTINCT ig.uuid FROM RKImportGroup ig"  # sometimes import groups apparently get culled from this table by Photos.app?
+    q = "SELECT DISTINCT m.importGroupUuid FROM RKMaster m"
+    import_groups = query(q)
+
+    global ONLY_RELEVANT_IMPORT_GROUPS
+    for l in import_groups:
+        if l[0] not in ignore_import_groups:
+            ONLY_RELEVANT_IMPORT_GROUPS.append(l[0])
+
+    print(ignore_import_groups)
+    print(ONLY_RELEVANT_IMPORT_GROUPS)
+
+def only_relevant_import_groups_sql():
+    return "AND m.importGroupUuid IN (" + ','.join(["'" + g + "'" for g in ONLY_RELEVANT_IMPORT_GROUPS]) + ")"
+
+def write_processed_import_groups():
+    log("Updating list of already-processed Apple Photos imports...")
+
+    with open(os.path.join(TARGET, "apple-photos-export.lst"), "a") as lst:
+        for l in ONLY_RELEVANT_IMPORT_GROUPS:
+            lst.write(l + "\n")
 
 # as a sanity check, keep track of number of photos processed
 TALLY = {}
@@ -141,72 +233,77 @@ def tally(category):
 
 def stats():
     # TODO make prettier
-    print(TALLY)
-    print(query("SELECT COUNT(*) FROM RKMaster"))
+    log("Summary:")
+    log("The following media types were found TODO", "info")
+    for category, count in TALLY.items():
+        print(category + ": " + str(count))
 
-# query helper
-def query(q):
-    conn = sqlite3.connect(TMP_DB)
-    c = conn.cursor()
-    c.execute(q)
-    res = list(c)
-    conn.close()
-    return res
+    log("The photos library contains this many items.", "info")
+    q = """
+        SELECT COUNT(*)
+        FROM RKMaster m
+        WHERE true
+    """ + only_relevant_import_groups_sql()
+    items = query(q)[0][0]
+    print(items)
 
-def log(msg, type='status'):
-    print(" " * 80, end="\r")
-    if type == "status":
-        print('\033[1m' + msg + '\033[0m')
-    if type == "info":
-        print(msg)
-    if type == "warn":
-        print('\033[38;5;208m' + "⚠️  " + msg + '\033[0m')
-    if type == "error":
-        sys.exit('\033[31m' + "❌  " + msg + '\033[0m')
+def log_file(path):
+    global TMP_FILES
+    TMP_FILES.append(path)
 
-# based on https://gist.github.com/vladignatyev/06860ec2040cb497f0f3
-# TODO add proper license etc.
-def progress(count, total, status=''):
-    bar_len = 60
-    filled_len = int(round(bar_len * count / float(total)))
-
-    bar = '=' * filled_len + '-' * (bar_len - filled_len)
-    percents = round(100.0 * count / float(total), 1)
-    items = str(count) + "/" + str(total)
-
-    sys.stdout.write('[%s] %s%s (%s)' % (bar, percents, '%', items))
-    if status:
-        sys.stdout.write(' -> %s' % (status))
-    sys.stdout.write('\r')
-    sys.stdout.flush()
-
-    if count == total:
-        sys.stdout.write('\n')
-        sys.stdout.flush()
-
-def jpeg_from_heic(heicfile, jpegfile):  # TODO setting for quality?
-    try:
-        subprocess.check_output(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "80", heicfile, "--out", jpegfile])
-    except subprocess.CalledProcessError as err:
-        log("sips failed: " + repr(err), "error")
-
-def assemble_file_name_prefix(creationdate, id):
+def assemble_filename_prefix(creationdate, id):
     ts = creationdate + 977616000 + 691200  # + 31 years + 8 leap days, for whatever reason
     # TODO maybe convert to system time zone? or "taken" time zone? this info can be found in the versions table
     datestring = datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
     datestring = datestring.replace(" ", "_").replace(":", "-")
     yearmonth = datetime.utcfromtimestamp(ts).strftime('%Y/%m_%B')
-    directory = TARGET + "/" + yearmonth
-    os.makedirs(directory, exist_ok=True)
-    filename_prefix = directory + "/" + datestring + "_" + str(id) + "_"
+    directory = os.path.join(TMP, yearmonth)
+    filename_prefix = os.path.join(directory, datestring + "_" + str(id) + "_")
     return filename_prefix
+
+def jpeg_from_heic(heicfile, jpegfile, quality=80):  # TODO setting for quality?
+    try:
+        subprocess.check_output(["sips", "-s", "format", "jpeg", "-s", "formatOptions", str(quality), heicfile, "--out", jpegfile])
+    except subprocess.CalledProcessError as err:
+        log("sips failed: " + repr(err), "error")
+
+def export_file(sourcepath, prefix):
+
+    # create intermediate directories if required
+    directory = os.path.dirname(prefix)
+    os.makedirs(directory, exist_ok=True)
+
+    # copy file
+    name, ext = os.path.splitext(os.path.basename(sourcepath))
+    targetpath = prefix + name + ext.lower()
+    shutil.copyfile(sourcepath, targetpath)
+    log_file(targetpath)
+
+    # create jpeg version of heic images
+    if "HEIC" in ext:
+        targetjpegpath = prefix + name + ".jpg"
+        jpeg_from_heic(sourcepath, targetjpegpath)
+        log_file(targetjpegpath)
+
+def persist_files_to_target():
+    log("Persisting exported media files to target...")
+    progress(0, len(TMP_FILES))
+    for i, tmppath in enumerate(TMP_FILES):
+        rel = os.path.relpath(tmppath, TMP)
+        targetpath = os.path.join(TARGET, rel)
+        directory = os.path.dirname(targetpath)
+        os.makedirs(directory, exist_ok=True)
+        shutil.copyfile(tmppath, targetpath)
+        progress(i+1, len(TMP_FILES), os.path.basename(tmppath))
+
+def clean_up():
+    log("Cleaning up...")
+    log("Removing " + TMP + "...", "info")
+    shutil.rmtree(TMP)
 
 def create_working_copy_of_photos_db():
     os.makedirs(TMP, exist_ok=True)
     shutil.copyfile(DATABASE, TMP_DB)
-
-def init_target():
-    os.makedirs(TARGET, exist_ok=True)
 
 def collect_and_convert_photos():
     log("Querying database for photos and live photos...")
@@ -219,7 +316,7 @@ def collect_and_convert_photos():
                v.selfPortrait AS selfie
         FROM RKMaster m LEFT JOIN RKVersion v ON m.uuid = v.masterUuid
         WHERE
-    """ + IS_PHOTO
+    """ + IS_PHOTO + only_relevant_import_groups_sql()
     photos = query(q)
 
     log("Building index of live photo videos...")
@@ -258,31 +355,24 @@ def collect_and_convert_photos():
     for i, (id, photopath, creationdate, videopath, selfie) in enumerate(photos2):
 
         # assemble filename prefix
-        filename_prefix = assemble_file_name_prefix(creationdate, id)
+        filename_prefix = assemble_filename_prefix(creationdate, id)
         if selfie:
             filename_prefix = filename_prefix + "selfie_"
 
-        # copy photo
-        pre, ext = os.path.splitext(os.path.basename(photopath))
-        targetphotopath = filename_prefix + pre + ext.lower()
-        shutil.copyfile(photopath, targetphotopath)
-        tally("livephoto")  # TODO isn't this really just HEIC photos? i.e. shouldn't this entire thing be renamed?
-
-        # create jpeg version
-        targetjpegpath = filename_prefix + pre + ".jpg"
-        jpeg_from_heic(photopath, targetjpegpath)
-        tally("livephotojpeg")
+        # copy photo and create jpeg version
+        export_file(photopath, filename_prefix)
+        tally("photo")
+        tally("photojpeg")
 
         # copy live video if it exists
         if videopath is not None:
-            targetvideopath = filename_prefix + os.path.basename(videopath)
-            shutil.copyfile(videopath, targetvideopath)
+            export_file(videopath, filename_prefix)
             tally("livephotovideo")
 
         tally("total")
         progress(i+1, len(photos2), os.path.basename(photopath))
 
-    # hdr images are already "baked in", the non-hdr version seems not to be gettable
+    # hdr images are already "baked in", the non-hdr version that briefly shows up on the phone seems to not be exported
 
 def collect_videos():
     log("Querying database for videos...")
@@ -294,7 +384,7 @@ def collect_videos():
                a.filePath AS attachment
         FROM RKMaster m LEFT JOIN RKAttachment a on m.uuid = a.attachedToUuid
         WHERE
-    """ + IS_VIDEO
+    """ + IS_VIDEO + only_relevant_import_groups_sql()
     videos = query(q)
 
     log("Collecting videos and real-time, high-framerate versions of slomos...")
@@ -306,14 +396,12 @@ def collect_videos():
         attachment = l[3]
 
         # assemble filename prefix
-        filename_prefix = assemble_file_name_prefix(creationdate, id)
+        filename_prefix = assemble_filename_prefix(creationdate, id)
         if attachment:  # TODO maybe use exiftool to look at framerate instead?
             filename_prefix = filename_prefix + "slomo_"
 
         # copy video
-        pre, ext = os.path.splitext(os.path.basename(videopath))
-        targetvideopath = filename_prefix + pre + ext.lower()
-        shutil.copyfile(videopath, targetvideopath)
+        export_file(videopath, filename_prefix)
         tally("videos")
 
         tally("total")
@@ -341,7 +429,7 @@ def collect_bursts():
                m.burstUuid AS burstid
         FROM RKMaster m
         WHERE
-    """ + IS_BURST
+    """ + IS_BURST + only_relevant_import_groups_sql()
     bursts = query(q)
 
     # TODO RKVersion contains column burstPickType indicating (?) which image was chosen as the "hero" image
@@ -355,12 +443,10 @@ def collect_bursts():
         burstid = l[3]
 
         # assemble filename prefix
-        filename_prefix = assemble_file_name_prefix(creationdate, id) + "burst_" + burstid + "_"
+        filename_prefix = assemble_filename_prefix(creationdate, id) + "burst_" + burstid + "_"
 
         # copy photo
-        pre, ext = os.path.splitext(os.path.basename(burstpath))
-        targetburstpath = filename_prefix + pre + ext.lower()
-        shutil.copyfile(burstpath, targetburstpath)
+        export_file(burstpath, filename_prefix)
         tally("bursts")
 
         tally("total")
@@ -375,7 +461,7 @@ def collect_panoramas():
                m.fileCreationDate AS creationdate
         FROM RKMaster m
         WHERE
-    """ + IS_PANORAMA
+    """ + IS_PANORAMA + only_relevant_import_groups_sql()
     panoramas = query(q)
 
     log("Collecting panoramas and creating JPEG versions...")
@@ -386,17 +472,11 @@ def collect_panoramas():
         creationdate = l[2]
 
         # assemble filename prefix  # TODO abstract this
-        filename_prefix = assemble_file_name_prefix(creationdate, id) + "panorama_"
+        filename_prefix = assemble_filename_prefix(creationdate, id) + "panorama_"
 
-        # copy photo  # TODO abstract
-        pre, ext = os.path.splitext(os.path.basename(panoramapath))
-        targetpanoramapath = filename_prefix + pre + ext.lower()
-        shutil.copyfile(panoramapath, targetpanoramapath)
+        # copy photo and create jpeg version
+        export_file(panoramapath, filename_prefix)
         tally("panoramas")
-
-        # create jpeg version
-        targetjpegpath = filename_prefix + pre + ".jpg"
-        jpeg_from_heic(panoramapath, targetjpegpath)
         tally("panoramajpeg")
 
         tally("total")
@@ -411,7 +491,7 @@ def collect_squares():
                m.fileCreationDate AS creationdate
         FROM RKMaster m
         WHERE
-    """ + IS_SQUARE
+    """ + IS_SQUARE + only_relevant_import_groups_sql()
     squares = query(q)
 
     log("Collecting square photos and creating JPEG versions...")
@@ -422,17 +502,11 @@ def collect_squares():
         creationdate = l[2]
 
         # assemble filename prefix  # TODO abstract this
-        filename_prefix = assemble_file_name_prefix(creationdate, id) + "square_"
+        filename_prefix = assemble_filename_prefix(creationdate, id) + "square_"
 
-        # copy photo  # TODO abstract
-        pre, ext = os.path.splitext(os.path.basename(squarepath))
-        targetsquarepath = filename_prefix + pre + ext.lower()
-        shutil.copyfile(squarepath, targetsquarepath)
+        # copy photo and create jpeg version
+        export_file(squarepath, filename_prefix)
         tally("squares")
-
-        # create jpeg version
-        targetjpegpath = filename_prefix + pre + ".jpg"
-        jpeg_from_heic(squarepath, targetjpegpath)
         tally("squarejpeg")
 
         tally("total")
@@ -447,7 +521,7 @@ def collect_insta_photos():
                m.fileCreationDate AS creationdate
         FROM RKMaster m
         WHERE
-    """ + IS_INSTA
+    """ + IS_INSTA + only_relevant_import_groups_sql()
     instas = query(q)
 
     log("Collecting Instagram photos...")
@@ -458,12 +532,10 @@ def collect_insta_photos():
         creationdate = l[2]
 
         # assemble filename prefix
-        filename_prefix = assemble_file_name_prefix(creationdate, id) + "instagram_"
+        filename_prefix = assemble_filename_prefix(creationdate, id) + "instagram_"
 
         # copy photo
-        pre, ext = os.path.splitext(os.path.basename(instapath))
-        targetinstapath = filename_prefix + pre + ext.lower()
-        shutil.copyfile(instapath, targetinstapath)
+        export_file(instapath, filename_prefix)
         tally("insta")
 
         tally("total")
@@ -475,21 +547,21 @@ def tally_other_known_media():
     log("Querying database for other known but irrelevant kinds of images...")
 
     log("Tallying Screenshots...", "info")
-    q = "SELECT 1 FROM RKMaster m WHERE" + IS_SCREENSHOT
+    q = "SELECT 1 FROM RKMaster m WHERE" + IS_SCREENSHOT + only_relevant_import_groups_sql()
     screenshots = query(q)
     for l in screenshots:
         tally("screenshot")
         tally("total")
 
     log("Tallying WhatsApp images...", "info")
-    q = "SELECT 1 FROM RKMaster m WHERE" + IS_WHATSAPP_PHOTO
+    q = "SELECT 1 FROM RKMaster m WHERE" + IS_WHATSAPP_PHOTO + only_relevant_import_groups_sql()
     whatsapp_images = query(q)
     for l in whatsapp_images:
         tally("whatsapp_image")
         tally("total")
 
     log("Tallying WhatsApp videos...", "info")
-    q = "SELECT 1 FROM RKMaster m WHERE" + IS_WHATSAPP_VIDEO
+    q = "SELECT 1 FROM RKMaster m WHERE" + IS_WHATSAPP_VIDEO + only_relevant_import_groups_sql()
     whatsapp_videos = query(q)
     for l in whatsapp_videos:
         tally("whatsapp_video")
@@ -507,8 +579,7 @@ def list_unknown_media():
          + IS_INSTA + ") OR ("
          + IS_SCREENSHOT + ") OR ("
          + IS_WHATSAPP_PHOTO + ") OR ("
-         + IS_WHATSAPP_VIDEO + ") OR ("
-         + "false))")
+         + IS_WHATSAPP_VIDEO + "))" + only_relevant_import_groups_sql())
     unknowns = query(q)
     for l in unknowns:
         print(MASTERS + "/" + l[0])
@@ -518,7 +589,8 @@ def list_unknown_media():
 def main():
     create_working_copy_of_photos_db()
 
-    init_target()
+    get_relevant_import_groups()
+    print(only_relevant_import_groups_sql())
 
     # TODO store most recent import uuid or a set of all of them in metadata
     # file (read in init_target()), then proceed based on that (only export newer
@@ -527,7 +599,7 @@ def main():
     # get this info based on grouping by import id and getting min/mix timestamp
     # for the newest known and oldest unknown). correct?"
 
-    collect_and_convert_photos()
+    #collect_and_convert_photos()
     collect_videos()
     collect_bursts()
     collect_panoramas()
@@ -537,8 +609,16 @@ def main():
     tally_other_known_media()
 
     list_unknown_media()
-
     stats()
+
+    response = input("All good (y/N)?")
+    if response != "y":
+        clean_up()
+        sys.exit(-1)
+
+    persist_files_to_target()
+    write_processed_import_groups()
+    clean_up()
 
 if __name__ == "__main__":
     main()
@@ -550,3 +630,4 @@ if __name__ == "__main__":
 
 # https://github.com/xgess/timestamp_all_photos/blob/master/app/apple_photos_library.py
 # https://github.com/SummittDweller/merge-photos-faces/blob/master/main.py
+

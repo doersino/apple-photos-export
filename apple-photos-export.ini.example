@@ -1,0 +1,7 @@
+[Paths]
+
+# Absolute path to the .photoslibrary package.
+ApplePhotosLibrary = /Users/YOU/Pictures/Photos Library.photoslibrary
+
+# Temporary storage.
+TemporaryStorage = /tmp/apple-photos-export
