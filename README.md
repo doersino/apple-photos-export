@@ -25,8 +25,11 @@ Wanting to keep my previous archival scheme running (and having it be complete, 
 1. Install `exiftool`.
 2. Install `python3`.
 3. Make sure `sips` is working (this should be included in your macOS installation).
+4. `pip3 install configfile`
+5. Copy `apple-photo-export.ini.example` to `apple-photo-export.ini` in your target path
+6. Call as `python3 apple-photo-export.py TARGET [-q]`
 
-TODO
+TODO ...
 
 Note: Only tested with photos imported from an iPhone via USB. No idea if, and how, this needs to be adjusted for iCloud use.
 

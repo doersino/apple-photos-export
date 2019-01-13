@@ -121,12 +121,14 @@ TMP_FILES = []
 # TODO #
 ########
 
-# TODO cleanup imports, really only import required functions
+# cleanup imports, really only import required functions
+# respect quient option
+# hmm, what happens if a picture is edited in the camera/photos app? original in versions table? try!
+# how does it interact with apps like halide?
+# use os.path.join throughout, especially in assemble_prefix thingy
+# test more! icloud? etc.
 
-# TODO use os.path.join throughout, especially in assemble_prefix thingy
-
-# general SELECT statement
-
+# put this or something similar into the documentation:
 # SELECT modelId AS id,
 #     imagePath AS absolutepath,
 #     fileCreationDate AS creationdate,
@@ -136,6 +138,8 @@ TMP_FILES = []
 #     importGroupUuid AS importid,
 #     hasAttachments AS isslomoorhasjpegscreenshot
 # FROM RKMaster
+
+################################################################################
 
 # WHERE predicates for known media types (where m is RKMaster)
 
