@@ -6,9 +6,10 @@ import subprocess
 import sqlite3
 import atexit
 from datetime import datetime
-from argparse import ArgumentParser
+import argparse
 
 import configparser
+
 import pyexiftool.exiftool as exif
 
 ###########
@@ -27,19 +28,16 @@ def log(msg, type='status'):
         sys.exit('\033[31m' + "❌  " + msg + '\033[0m')
 
 # based on https://gist.github.com/vladignatyev/06860ec2040cb497f0f3
-# TODO add proper license etc.
-PREVIOUS_PROGRESS_BAR_LENGTH = 0
 def progress(count, total, status=''):
-    global PREVIOUS_PROGRESS_BAR_LENGTH
 
     # don't print empty progress bars
     if total == 0:
         return
 
     # erase previous progres bar (\b moves cursor one character backward)
-    sys.stdout.write('\b' * PREVIOUS_PROGRESS_BAR_LENGTH
-                     +  ' ' * PREVIOUS_PROGRESS_BAR_LENGTH
-                     + '\b' * PREVIOUS_PROGRESS_BAR_LENGTH)
+    sys.stdout.write('\b' * progress.prev_length
+                     +  ' ' * progress.prev_length
+                     + '\b' * progress.prev_length)
 
     # print progress bar
     bar_len = 50
@@ -55,12 +53,13 @@ def progress(count, total, status=''):
     sys.stdout.write(progress_bar + '\r')
 
     # store length of current progress bar for future erasing
-    PREVIOUS_PROGRESS_BAR_LENGTH = len(progress_bar)
+    progress.prev_length = len(progress_bar)
 
     # print newline upon completion to prevent overwriting by subsequent output
     if count == total:
         sys.stdout.write('\n')
         sys.stdout.flush()
+progress.prev_length = 0
 
 
 ############################
@@ -68,16 +67,16 @@ def progress(count, total, status=''):
 ############################
 
 log("Parsing arguments...")
-parser = ArgumentParser()
+parser = argparse.ArgumentParser()
 parser.add_argument("target", metavar="TARGET", type=str, help="target directory (should also contain configuration)")
-parser.add_argument("-q", "--quiet", action="store_false", dest="verbose", default=True, help="don't print status messages to stdout")
+#parser.add_argument("-q", "--quiet", action="store_false", dest="verbose", default=True, help="don't print status messages to stdout")
 args = parser.parse_args()
 
 # Target folder.
 TARGET = args.target
 
 # Do not print any non-warning, non-error output?
-VERBOSE = args.verbose
+#VERBOSE = args.verbose
 
 log("Parsing configuration file, thereby also checking if target exists...")
 CONFIG = os.path.join(TARGET, "apple-photos-export.ini")
@@ -106,8 +105,9 @@ MASTERS = os.path.join(LIBRARY, "Masters")
 # Subfolders.
 LIVE_PHOTO_VIDEOS = os.path.join(LIBRARY, "resources/media/master")
 
-# TODO Slomo videos actually rendered as slomos etc. (And more?) In subfolders.
-#VERSION  = os.path.join(LIBRARY, "resources/media/version")
+# Slomo videos actually rendered as slomos, edited variants of photos that have
+# been edited on Photos on the phone, etc.
+VERSION = os.path.join(LIBRARY, "resources/media/version")
 
 # Import groups to be ignored (i.e. those that have already been processed).
 ONLY_RELEVANT_IMPORT_GROUPS = []
@@ -121,11 +121,8 @@ TMP_FILES = []
 # TODO #
 ########
 
-# cleanup imports, really only import required functions
-# respect quient option
 # hmm, what happens if a picture is edited in the camera/photos app? original in versions table? try!
 # how does it interact with apps like halide?
-# use os.path.join throughout, especially in assemble_prefix thingy
 # test more! icloud? etc.
 
 # put this or something similar into the documentation:
@@ -142,7 +139,6 @@ TMP_FILES = []
 ################################################################################
 
 # WHERE predicates for known media types (where m is RKMaster)
-
 IS_PHOTO = """
 m.mediaGroupId IS NOT NULL
 AND m.UTI = 'public.heic'
@@ -197,8 +193,6 @@ IS_WHATSAPP_VIDEO = """
 m.UTI = 'public.mpeg-4'
 """ + IS_WHATSAPP
 
-################################################################################
-
 # query helper
 def query(q):
     conn = sqlite3.connect(TMP_DB)
@@ -233,9 +227,6 @@ def get_relevant_import_groups():
     for l in import_groups:
         if l[0] not in ignore_import_groups:
             ONLY_RELEVANT_IMPORT_GROUPS.append(l[0])
-
-    #print(ignore_import_groups)
-    #print(ONLY_RELEVANT_IMPORT_GROUPS)
 
 def only_relevant_import_groups_sql():
     return "m.importGroupUuid IN (" + ','.join(["'" + g + "'" for g in ONLY_RELEVANT_IMPORT_GROUPS]) + ")"
@@ -275,8 +266,11 @@ def log_file(path):
     global TMP_FILES
     TMP_FILES.append(path)
 
+def weird_apple_timestamp_to_unix(ts):
+    return int(ts) + 977616000 + 691200  # + 31 years + 8 leap days, for whatever reason
+
 def assemble_filename_prefix(creationdate, id):
-    ts = creationdate + 977616000 + 691200  # + 31 years + 8 leap days, for whatever reason
+    ts = weird_apple_timestamp_to_unix(creationdate)
     # TODO maybe convert to system time zone? or "taken" time zone? this info can be found in the versions table
     datestring = datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
     datestring = datestring.replace(" ", "_").replace(":", "-")
@@ -285,7 +279,7 @@ def assemble_filename_prefix(creationdate, id):
     filename_prefix = os.path.join(directory, datestring + "_" + str(id) + "_")
     return filename_prefix
 
-def jpeg_from_heic(heicfile, jpegfile, quality=80):  # TODO setting for quality?
+def jpeg_from_heic(heicfile, jpegfile, quality=80):
     try:
         subprocess.check_output(["sips", "-s", "format", "jpeg", "-s", "formatOptions", str(quality), heicfile, "--out", jpegfile])
     except subprocess.CalledProcessError as err:
@@ -345,7 +339,6 @@ def collect_and_convert_photos():
     photos = query(q)
 
     log("Building index of live photo videos...")
-
     live_photo_videos = {}
 
     mov_files = glob.iglob(LIVE_PHOTO_VIDEOS + '/**/*.mov', recursive=True)
@@ -375,6 +368,16 @@ def collect_and_convert_photos():
             log("Couldn't find live photo video file for " + photopath + ", will keep it without a video", "warn")
             photos2.append(tuple([id, photopath, creationdate, None, selfie]))
 
+    # TODO build and match contentid index of files in resources/media/version => edited photos and corresponding edited live videos
+    # for edited photos, RKVersion.adjustmentUuid is not UNADJUSTEDNONRAW
+    # can match edited photo and edited live video based on [Apple]         ContentIdentifier               : 0ABA71EB-76B4-410E-9F82-EB42D63F4B2D
+    # and [QuickTime]     ContentIdentifier               : 0ABA71EB-76B4-410E-9F82-EB42D63F4B2D
+    # TODO but how to match with original/raw photo? also just based on time like video? ugh
+    attachment_files = None
+    # ...
+    photos3 = []
+    # ...
+
     log("Collecting photos and corresponding live photo video files and creating JPEG versions...")
     progress(0, len(photos2))
     for i, (id, photopath, creationdate, videopath, selfie) in enumerate(photos2):
@@ -390,14 +393,12 @@ def collect_and_convert_photos():
         tally("photojpeg")
 
         # copy live video if it exists
-        if videopath is not None:
+        if videopath:
             export_file(videopath, filename_prefix)
             tally("livephotovideo")
 
         tally("total")
         progress(i+1, len(photos2), os.path.basename(photopath))
-
-    # hdr images are already "baked in", the non-hdr version that briefly shows up on the phone seems to not be exported
 
 def collect_videos():
     log("Querying database for videos...")
@@ -406,34 +407,70 @@ def collect_videos():
         SELECT m.modelId AS id,
                m.imagePath AS absolutepath,
                m.fileCreationDate AS creationdate,
-               a.filePath AS attachment
+               a.filePath AS attachment,
+               a.fileModificationDate AS modificationdate
         FROM RKMaster m LEFT JOIN RKAttachment a on m.uuid = a.attachedToUuid
     """ + pred(IS_VIDEO, only_relevant_import_groups_sql())
     videos = query(q)
 
-    log("Collecting videos and real-time, high-framerate versions of slomos...")
-    progress(0, len(videos))
-    for i, l in enumerate(videos):
+    log("Building index of rendered slomo videos...")
+    rendered_slomo_videos = {}
+
+    mov_files = glob.iglob(VERSION + '/**/fullsizeoutput_*.mov', recursive=True)
+    with exif.ExifTool() as et:
+        log("Batch-extracting metadata (this might take a few seconds)...", "info")
+        metadata = et.get_metadata_batch(mov_files)
+
+    log("Looking for QuickTime:DateTimeOriginal fields...", "info")
+    for d in metadata:
+        try:
+            modificationdate = d["QuickTime:DateTimeOriginal"]
+            modificationdate_tz = int(datetime.strptime(modificationdate, "%Y:%m:%d %H:%M:%S%z").timestamp())
+            rendered_slomo_videos[modificationdate_tz] = d["SourceFile"]
+        except KeyError:
+            log("Couldn't find QuickTime:DateTimeOriginal field for " + d["System:FileName"] + ", will ignore", "warn")
+
+    log("Matching slomo videos with corresponding rendered slomo videos...")
+    videos2 = [] # id, date, video file, rendered slomo file
+    for l in videos:
         id = l[0]
         videopath = MASTERS + "/" + l[1]
         creationdate = l[2]
         attachment = l[3]
+        modificationdate = l[4]
+        try:
+            renderedslomopath = rendered_slomo_videos[weird_apple_timestamp_to_unix(modificationdate)]
+            videos2.append(tuple([id, videopath, creationdate, renderedslomopath]))
+        except (KeyError, TypeError):
+            if attachment:  # only in this case we expect a rendered slomo
+                log("Couldn't find rendered slomo video for " + videopath + ", will keep it without one", "warn")
+            videos2.append(tuple([id, videopath, creationdate, None]))
+
+    log("Collecting videos: normal videos, timelapses, slomos (real-time, high-framerate versions) and rendered slomo videos...")
+    # TODO timelapses: framerate 30 (instead of ~60 vs. ~240) and also: [Track1]        ComApplePhotosCaptureMode       : Time-lapse
+    progress(0, len(videos2))
+    for i, (id, videopath, creationdate, renderedslomopath) in enumerate(videos2):
 
         # assemble filename prefix
         filename_prefix = assemble_filename_prefix(creationdate, id)
-        if attachment:  # TODO maybe use exiftool to look at framerate instead?
+        if renderedslomopath:
             filename_prefix = filename_prefix + "slomo_"
 
         # copy video
         export_file(videopath, filename_prefix)
-        tally("videos")
+        tally("video")
+
+        # copy rendered slomo video if it exists
+        if renderedslomopath:
+            export_file(renderedslomopath, filename_prefix + "rendered_")
+            tally("renderedslomovideo")
 
         tally("total")
-        progress(i+1, len(videos), os.path.basename(videopath))
+        progress(i+1, len(videos2), os.path.basename(videopath))
 
-# TODO timelapses: framerate 30 (instead of ~60 vs. ~240) and also: [Track1]        ComApplePhotosCaptureMode       : Time-lapse
-
-def get_matching_slomos(videos):
+    print(videos2)
+    input()
+    sys.exit(-2)
 
     # TODO rendered versions of slomos (see resources/media/version)
     # iff hasAttachments = 1? this also catches jpeg screenshots, good
@@ -637,7 +674,6 @@ def main():
 
     persist_files_to_target()
     write_processed_import_groups()
-    clean_up()
 
 if __name__ == "__main__":
     main()
