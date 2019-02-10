@@ -34,7 +34,7 @@ TODO
 ```
 
 
-# The very interesting backstory
+## The very interesting backstory
 
 Back in the olden days, when I was using an Android-powered Nexus 5 and Dropbox's "Camera Uploads" feature, everything was great:
 
