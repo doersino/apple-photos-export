@@ -2,9 +2,9 @@
 
 A work-in-progress, might-not-work-for-anyone-who-isn't-me Apple Photos export script.
 
-**Please note that `apple-photos-export.py` has been written to fit _my_ (admittedly weird) use case. No care was taken to make it particularly useful to anyone else. Notably, it's *not an all-purpose backup tool*. Continue reading to find out what exactly it does.**
+**Please note that `apple-photos-export.py` has been written to fit _my_ (admittedly weird) use case. No care was taken to make it particularly useful to anyone else. Perhaps most notably, it's *not an all-purpose backup tool* (I don't think one exists). Continue reading to find out what exactly it does.**
 
-*But first, another disclaimer: All of the below potentially only works for whatever version of macOS/Photos was most recent at the time of the most recent commit to this repository. The code is somewhat convoluted and will invariably break once a major update comes along. It's only been tested for photos imported into an Apple Photos library via USB – I haven't yet tried how using iCloud changes things. Also, I don't use Photos for anything else. From the beginning, my iPhone was set to use the HEIC format, and Live Photos have always been enabled. Lastly, I've got an iPhone 7 – so there's no way for me to tell how Portrait mode photos are stored.*
+*But first, another bunch of disclaimers: All of the below potentially only works for whatever version of macOS/Photos was most recent at the time of the most recent commit to this repository. The code is somewhat convoluted and will invariably break once a major update comes along. It's only been tested for photos imported into an Apple Photos library via USB – I haven't yet tried how using iCloud changes things. Also, I don't use Photos for anything else and have never created an album. From the beginning, my iPhone was set to use the HEIC format, and Live Photos have always been enabled. Lastly, I've got an iPhone 7 – so there's no way for me to tell how Portrait mode photos are stored.*
 
 ---
 
@@ -42,7 +42,7 @@ Wanting to keep my previous archival scheme running (and having it be complete, 
 4. Success.
 
 
-## Notes on `photos.db` the directory structure of `~/Pictures/Apple Photos.photoslibrary`
+## Notes on `photos.db` and the directory structure of `~/Pictures/Apple Photos.photoslibrary`
 
 *Current as of February 2019 (iOS 12.1.2, macOS 10.14.2 Mojave, Photos 4.0).*
 
@@ -64,7 +64,7 @@ FROM RKMaster                 -- Most important table, also worth taking a look 
 
 A commented tree view of the directory structure of `Photos Library.photoslibrary`:
 
-```python
+```sql
 ├── Attachments/          # Not-really-useful metadata for adjustments.
 │   └── ...
 ├── Masters/              # Master (original, un-edited) photos, organized in subdirectories according to import group dates.
@@ -132,7 +132,7 @@ A commented tree view of the directory structure of `Photos Library.photoslibrar
 ## Future work
 
 * [ ] iCloud support.
-* [ ] Faces support (don't yet use this feature).
+* [ ] Named faces support (don't yet use this feature; take a look at https://github.com/SummittDweller/merge-photos-faces/blob/master/main.py and https://github.com/patrikhson/photo-export/blob/master/photo.py).
 * [ ] Portrait mode support (don't have the required hardware).
+* [ ] Maybe export rendered variants of edited photos (take a look at https://github.com/orangeturtle739/photos-export)?
 * [ ] ...
-* [ ] Get hired by Apple to build an official export tool. As if.
