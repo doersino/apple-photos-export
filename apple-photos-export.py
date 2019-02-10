@@ -131,7 +131,7 @@ TMP_FILES = []
 # WHERE predicates for known media types (where m is RKMaster)
 IS_PHOTO = """
 m.UTI = 'public.heic'
-AND m.mediaGroupId IS NOT NULL
+AND (m.mediaGroupId IS NOT NULL OR m.groupingUuid IS NOT NULL)
 """
 
 IS_VIDEO = """
@@ -145,13 +145,13 @@ AND m.burstUuid IS NOT NULL
 
 IS_PANORAMA = """
 m.UTI = 'public.heic'
-AND m.mediaGroupId IS NULL
+AND (m.mediaGroupId IS NULL AND m.groupingUuid IS NULL)
 AND m.width <> m.height
 """
 
 IS_SQUARE = """
 m.UTI = 'public.heic'
-AND m.mediaGroupId IS NULL
+AND (m.mediaGroupId IS NULL AND m.groupingUuid IS NULL)
 AND m.width = m.height
 """
 
