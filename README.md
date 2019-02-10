@@ -1,6 +1,10 @@
 # apple-photos-export
 
+*A perpetually work-in-progress, might-not-work-for-anyone-who-isn't-me Apple Photos export script. In other words:*
+
 **Please note that this script is written to fit my (admittedly weird) use case. No care was taken to make it particularly useful to anyone else, most notably it's *not an all-purpose backup tool*. Continue reading to find out what exactly it does.**
+
+---
 
 Back when I was using an Android-powered Nexus 5 and Dropbox's "Camera Uploads" feature, everything was great:
 
@@ -43,6 +47,19 @@ In order to ... reverse-engineer some of the structure. This proved a bit frustr
 As of January 2019, TODO
 
 TODO
+
+```
+# put this or something similar into the documentation:
+# SELECT modelId AS id,
+#     imagePath AS absolutepath,
+#     fileCreationDate AS creationdate,
+#     mediaGroupId AS contentidentifier,  -- if set, need to get live photo video
+#     burstUuid AS burstid,               -- if set, could group burst mode pics
+#     UTI AS type,                        -- public.heic, public.jpeg (whatsapp/burst/pano), com.apple.quicktime-movie, public.png, public.mpeg-4 (whatsapp movies)
+#     importGroupUuid AS importid,
+#     hasAttachments AS isslomoorhasjpegscreenshot
+# FROM RKMaster
+```
 
 
 ## Future work
