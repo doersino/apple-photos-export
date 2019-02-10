@@ -1,12 +1,14 @@
 # apple-photos-export
 
-A work-in-progress, might-not-work-for-anyone-who-isn't-me Apple Photos export script.
-
 **Please note that `apple-photos-export.py` has been written to fit _my_ (admittedly weird) use case. No care was taken to make it particularly useful to anyone else. Perhaps most notably, it's *not an all-purpose backup tool* (I don't think one exists). Continue reading to find out what exactly it does.**
 
-*But first, another bunch of disclaimers: All of the below potentially only works for whatever version of macOS/Photos was most recent at the time of the most recent commit to this repository. The code is somewhat convoluted and will invariably break once a major update comes along. It's only been tested for photos imported into an Apple Photos library via USB – I haven't yet tried how using iCloud changes things. Also, I don't use Photos for anything else and have never created an album. From the beginning, my iPhone was set to use the HEIC format, and Live Photos have always been enabled. Lastly, I've got an iPhone 7 – so there's no way for me to tell how Portrait mode photos are stored.*
+*But first, another bunch of disclaimers: All of the below potentially only works for whatever version of macOS/Photos was most recent at the time of the most recent commit to this repository. The code is somewhat convoluted and will invariably break once a major update comes along. It's only been tested for photos imported into an Apple Photos library via USB – I haven't yet tried how using iCloud changes things. Also, I don't use Photos for anything else and have never created an album. From the beginning, my iPhone was set to use the HEIC format, Live Photos have always been enabled and for HDR photos, the non-HDR variant is alst stored. Lastly, I've got an iPhone 7 – so there's no way for me to tell how Portrait mode photos are stored.*
 
 ---
+
+An Apple Photos export script.
+
+<center><img src="apple-photos-export.jpg" width="128"></center>
 
 
 ## Setup and usage
@@ -22,10 +24,17 @@ With this setup work out of the way, all that's left is to plug your iPhone into
 python3 apple-photos-export.py TARGET [-v]
 ```
 
-This will read the config file, export all media to a location within the depths of `/tmp` and only upon your confirmation copy them to the `TARGET`. Additionally, a cache file `apple-photos-export.json` containing a record of already-exported photos and some metadata will be created.
+This will read the config file, export all media [to a location within the depths of `/tmp` and only upon your confirmation copy them] to the `TARGET`, structured as shown below. Additionally, a cache file `TARGET/apple-photos-export.json` containing a record of already-exported photos and some metadata will be created.
+
+```r
+TARGET
+└── apple-photos-export.ini
+
+TODO
+```
 
 
-# The definitely very interesting backstory
+# The very interesting backstory
 
 Back in the olden days, when I was using an Android-powered Nexus 5 and Dropbox's "Camera Uploads" feature, everything was great:
 
@@ -64,7 +73,8 @@ FROM RKMaster                 -- Most important table, also worth taking a look 
 
 A commented tree view of the directory structure of `Photos Library.photoslibrary`:
 
-```sql
+```r
+Photos Library.photoslibrary
 ├── Attachments/          # Not-really-useful metadata for adjustments.
 │   └── ...
 ├── Masters/              # Master (original, un-edited) photos, organized in subdirectories according to import group dates.
