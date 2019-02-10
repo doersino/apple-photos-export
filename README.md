@@ -1,67 +1,138 @@
 # apple-photos-export
 
-*A perpetually work-in-progress, might-not-work-for-anyone-who-isn't-me Apple Photos export script. In other words:*
+A work-in-progress, might-not-work-for-anyone-who-isn't-me Apple Photos export script.
 
-**Please note that this script is written to fit my (admittedly weird) use case. No care was taken to make it particularly useful to anyone else, most notably it's *not an all-purpose backup tool*. Continue reading to find out what exactly it does.**
+**Please note that `apple-photos-export.py` has been written to fit _my_ (admittedly weird) use case. No care was taken to make it particularly useful to anyone else. Notably, it's *not an all-purpose backup tool*. Continue reading to find out what exactly it does.**
+
+*But first, another disclaimer: All of the below potentially only works for whatever version of macOS/Photos was most recent at the time of the most recent commit to this repository. The code is somewhat convoluted and will invariably break once a major update comes along. It's only been tested for photos imported into an Apple Photos library via USB – I haven't yet tried how using iCloud changes things. Also, I don't use Photos for anything else. From the beginning, my iPhone was set to use the HEIC format, and Live Photos have always been enabled. Lastly, I've got an iPhone 7 – so there's no way for me to tell how Portrait mode photos are stored.*
 
 ---
 
-Back when I was using an Android-powered Nexus 5 and Dropbox's "Camera Uploads" feature, everything was great:
+
+## Setup and usage
+
+1. Install `exiftool` and `python3`.
+2. Make sure `sips` is working (this should be included in your macOS installation).
+3. `pip3 install configfile`.
+4. Copy `apple-photos-export.ini.example` to `apple-photos-export.ini` in your desired target path (and fill in the details).
+
+With this setup work out of the way, all that's left is to plug your iPhone into your MacBook, import all (or some) photos and run:
+
+```sh
+python3 apple-photos-export.py TARGET [-v]
+```
+
+This will read the config file, export all media to a location within the depths of `/tmp` and only upon your confirmation copy them to the `TARGET`. Additionally, a cache file `apple-photos-export.json` containing a record of already-exported photos and some metadata will be created.
+
+
+# The definitely very interesting backstory
+
+Back in the olden days, when I was using an Android-powered Nexus 5 and Dropbox's "Camera Uploads" feature, everything was great:
 
 1. The phone would save photos (whether HDR or not) as `.jpg`, videos as `.mp4` and screenshots as `.png`.
-2. Dropbox would continuously collect them and they'd end up on a folder on my laptop (with more or less sensible, time-based filenames), from where I could periodically archive them to a big external disk.
+2. Dropbox would continuously collect them and they'd end up on a folder on my laptop (with more or less sensible, time-based filenames), from where I could periodically archive them to a big external disk (and a backup, of course).
 
-Then I got myself an iPhone, which – in addition to "normal" photos and videos – takes live photos, HDR photos etc., for which Dropbox only uploads the "base" photo. Also, some apps such as WhatsApp store received images in the camera roll, which messes everything up. And I also wanted a JPEG version of all HEIC files for future proofing slash portability.
-
-TODO instagram: prev via manual dropbox file upload, now they also just end up in the camera roll
+Then I got myself an iPhone, which – in addition to "normal" photos and videos – takes Live Photos, for which Dropbox only uploads the "base" photo. To make matters worse, some apps such as WhatsApp store received images in the camera roll, which messes everything up unless some filtering is done. In a futile attept to future-proof things (and for portability), I thought it'd be neat to generate a JPEG version of all HEIC files.
 
 Wanting to keep my previous archival scheme running (and having it be complete, i.e. also containing the short videos corresponding to live photos), I've come up with the following workflow:
 
-1. Connect the iPhone to my laptop.
+1. Connect the iPhone to my MacBook via USB.
 2. Import all new photos into Photos.app.
-3. Magic (i.e. run the code contained in this repository, which is convoluted and will invariably break once a major update comes along).
+3. ??? (this is where `apple-photos-export.py` comes in).
 4. Success.
-5. TODO Delete everything from the phone and photos.app?
 
 
-## Talk is cheap. Show me (how to use) the code.
+## Notes on `photos.db` the directory structure of `~/Pictures/Apple Photos.photoslibrary`
 
-1. Install `exiftool`.
-2. Install `python3`.
-3. Make sure `sips` is working (this should be included in your macOS installation).
-4. `pip3 install configfile`
-5. Copy `apple-photo-export.ini.example` to `apple-photo-export.ini` in your target path
-6. Call as `python3 apple-photo-export.py TARGET [-q]`
+*Current as of February 2019 (iOS 12.1.2, macOS 10.14.2 Mojave, Photos 4.0).*
 
-TODO ...
+In order to write `apple-photos-export.py`, I needed to reverse-engineer how Apple Photos stores and keep track of photos. Initially, this promised to be a piece of cake since Photos, inside the `Photos Library.photoslibrary`, uses an SQLite database `Photos Library.photoslibrary/database/photos.db` to keep track of the run-of-the-mill files it imports.
 
-Note: Only tested with photos imported from an iPhone via USB. No idea if, and how, this needs to be adjusted for iCloud use.
+Upon further investigation, this proved a bit frustrating since the database really doesn't seem to contain much of the detail needed to get to the Live Photo videos and, to a lesser degree, discern different types of media. My solutions to these issues are encoded in `apple-photos-export.py`. The following SQL query gives sort of an overview:
 
-Note: All of the above (and below) probably works/holds for whatever version of mscOS/Photos was most recent at the time of the most recent commit to this repository. Commit TODO was current in January 2019.
-
-
-## Notes on `photos.db` and the folder structure of `.photoslibrary`
-
-In order to ... reverse-engineer some of the structure. This proved a bit frustrating since the database really doesn't seem to contains much detail re. discerning different types of media. At least I couldn't find a "clean" way of doing that, so my way will inevitably break on updates.
-
-As of January 2019, TODO
-
-TODO
-
+```sql
+SELECT modelId,               -- ID
+       imagePath,             -- Absolute path to the base image.
+       fileModificationDate,  -- Useful for matching slomo videos with rendered variants auto-generated by Photos.
+       mediaGroupId,          -- Corresponds to the ContentIdentifier EXIF key in Live Photo videos, required for matching.
+       burstUuid,             -- If set, we're dealing with a photo taken in burst mode (this allows grouping of bursts; also RKVersion contains a column burstPickType which I think indicates the best picture of a given burst).
+       UTI,                   -- File type, commonly one of: public.heic, public.jpeg (WhatsApp/burst/panorama), com.apple.quicktime-movie, public.png, public.mpeg-4 (WhatsApp videos).
+       importGroupUuid,       -- The import group (each time you import some pictures into Photos, an import group is created) the picture is part of. Allows trivially ignoring previously-exported imports for a significant speedup.
+       hasAttachments         -- Indicates whether Photos has created a rendered slomo video or if you've performed any edits to the photo.
+FROM RKMaster                 -- Most important table, also worth taking a look at: RKVersion, RKAttachment.
 ```
-# put this or something similar into the documentation:
-# SELECT modelId AS id,
-#     imagePath AS absolutepath,
-#     fileCreationDate AS creationdate,
-#     mediaGroupId AS contentidentifier,  -- if set, need to get live photo video
-#     burstUuid AS burstid,               -- if set, could group burst mode pics
-#     UTI AS type,                        -- public.heic, public.jpeg (whatsapp/burst/pano), com.apple.quicktime-movie, public.png, public.mpeg-4 (whatsapp movies)
-#     importGroupUuid AS importid,
-#     hasAttachments AS isslomoorhasjpegscreenshot
-# FROM RKMaster
+
+A commented tree view of the directory structure of `Photos Library.photoslibrary`:
+
+```python
+├── Attachments/          # Not-really-useful metadata for adjustments.
+│   └── ...
+├── Masters/              # Master (original, un-edited) photos, organized in subdirectories according to import group dates.
+│   ├── 2018/
+│   │   └── 12/
+│   │       └── 28/
+│   │           └── 20181228-132551/
+│   │               ├── IMG_0001.HEIC
+│   │               ├── IMG_0002.HEIC
+│   │               └── ...
+│   └── 2019/
+│       └── ...
+├── database/             # Database and database-related files.
+│   ├── photos.db
+│   └── ...
+├── private/
+│   └── ...
+└── resources/
+    ├── media/
+    │   ├── face/         # Extracted (and partially somewhat distorted) faces in image form (this directory might take a few days to populate).
+    │   │   └── ...
+    │   ├── master/       # Live Photo videos (among some other stuff, like JPEG versions of screenshots).
+    │   │   ├── 00/
+    │   │   │   └── 00/
+    │   │   │       ├── fullsizeoutput_fe.jpeg
+    │   │   │       ├── ...
+    │   │   │       ├── jpegvideocomplement_1.mov
+    │   │   │       ├── jpegvideocomplement_10.mov
+    │   │   │       ├── jpegvideocomplement_11.mov
+    │   │   │       ├── ...
+    │   │   │       └── jpegvideocomplement_ff.mov
+    │   │   └── ...
+    │   ├── t/
+    │   │   └── ...
+    │   └── version/      # Rendered slomo videos and rendered versions of edited photos.
+    │       ├── 00/
+    │       │   └── 00/
+    │       │       ├── fullsizeoutput_16.jpeg
+    │       │       └── fullsizeoutput_22.jpeg
+    │       ├── 03/
+    │       │   └── 00/
+    │       │       ├── fullsizeoutput_35d.mov
+    │       │       ├── fullsizeoutput_363.mov
+    │       │       └── fullsizeoutput_36b.mov
+    │       └── 05/
+    │           └── 00/
+    │               ├── fullsizeoutput_521.jpeg
+    │               └── videocomplementoutput_522.mov
+    ├── moments/          # Some .plist files, nothing much useful.
+    │   └── ...
+    ├── projects/
+    ├── proxies/
+    │   └── derivatives/  # Thumbnails.
+    │       └── ...
+    ├── recovery/         # Databse backups in some weird format, I think.
+    │   ├── Info.plist
+    │   ├── RKAdjustmentData/
+    │   │   └── 0000000000.lij
+    │   └── ...
+    └── segments/
+        └── ...
 ```
 
 
 ## Future work
 
-* # TODO faces into filenames? i don't use this (yet)
+* [ ] iCloud support.
+* [ ] Faces support (don't yet use this feature).
+* [ ] Portrait mode support (don't have the required hardware).
+* [ ] ...
+* [ ] Get hired by Apple to build an official export tool. As if.
