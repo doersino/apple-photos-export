@@ -26,7 +26,7 @@ python3 apple-photos-export.py TARGET [-v]
 
 This will read the config file, export all media [to a location within the depths of `/tmp` and only upon your confirmation copy them] to the `TARGET`, structured as shown below. Additionally, a cache file `TARGET/apple-photos-export.json` containing a record of already-exported photos and some metadata will be created.
 
-```r
+```text
 TARGET
 ├── 2018/
 │   ├── 09_September/
@@ -87,7 +87,7 @@ TARGET
 ```
 
 
-## The very interesting backstory
+## The (not) very interesting backstory
 
 Back in the olden days, when I was using an Android-powered Nexus 5 and Dropbox's "Camera Uploads" feature, everything was great:
 
@@ -127,7 +127,7 @@ FROM RKMaster                 -- Most important table, also worth taking a look 
 
 A commented tree view of the directory structure of `Photos Library.photoslibrary`:
 
-```r
+```text
 Photos Library.photoslibrary
 ├── Attachments/          # Not-really-useful metadata for adjustments.
 │   └── ...
