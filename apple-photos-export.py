@@ -141,11 +141,17 @@ UTI = 'com.apple.quicktime-movie'
 IS_BURST = """
 m.UTI = 'public.jpeg'
 AND m.burstUuid IS NOT NULL
+AND NOT (substr(m.filename, 9, 1) = '-'
+         AND substr(m.filename, 14, 1) = '-'
+         AND substr(m.filename, 19, 1) = '-'
+         AND substr(m.filename, 24, 1) = '-'
+         AND length(m.filename) = 40)
 """
 
 IS_PANORAMA = """
 m.UTI = 'public.heic'
-AND (m.mediaGroupId IS NULL AND m.groupingUuid IS NULL)
+AND m.mediaGroupId IS NULL
+AND m.groupingUuid IS NULL
 AND m.width <> m.height
 """
 
@@ -156,8 +162,14 @@ AND m.width = m.height
 """
 
 IS_INSTA = """
-m.mediaGroupId IS NOT NULL
-AND m.UTI = 'public.jpeg'
+m.UTI = 'public.jpeg'
+AND (m.mediaGroupId IS NOT NULL
+     OR (m.burstUuid IS NOT NULL
+         AND (substr(m.filename, 9, 1) = '-'
+              AND substr(m.filename, 14, 1) = '-'
+              AND substr(m.filename, 19, 1) = '-'
+              AND substr(m.filename, 24, 1) = '-'
+              AND length(m.filename) = 40)))
 """
 
 IS_SCREENSHOT = """
