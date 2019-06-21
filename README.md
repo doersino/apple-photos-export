@@ -99,7 +99,7 @@ Wanting to keep my previous archival scheme running (and having it be complete, 
 1. Connect the iPhone to my MacBook via USB.
 2. Import all new photos into Photos.app.
 3. ??? (this is where `apple-photos-export.py` comes in).
-4. Success.
+4. PROFIT!!!
 
 
 ## Notes on `photos.db` and the directory structure of `~/Pictures/Apple Photos.photoslibrary`
