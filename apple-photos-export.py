@@ -428,18 +428,19 @@ def collect_videos():
     rendered_slomo_videos = {}
 
     mov_files = glob.iglob(VERSION + '/**/fullsizeoutput_*.mov', recursive=True)
-    with exif.ExifTool() as et:
-        log("Batch-extracting metadata (this might take a few seconds)...", "info")
-        metadata = et.get_metadata_batch(mov_files)
+    if list(mov_files):
+        with exif.ExifTool() as et:
+            log("Batch-extracting metadata (this might take a few seconds)...", "info")
+            metadata = et.get_metadata_batch(mov_files)
 
-    log("Looking for QuickTime:DateTimeOriginal fields...", "info")
-    for d in metadata:
-        try:
-            modificationdate = d["QuickTime:DateTimeOriginal"]
-            modificationdate_tz = int(datetime.strptime(modificationdate, "%Y:%m:%d %H:%M:%S%z").timestamp())
-            rendered_slomo_videos[modificationdate_tz] = d["SourceFile"]
-        except KeyError:
-            log("Couldn't find QuickTime:DateTimeOriginal field for " + d["System:FileName"] + ", will ignore", "warn")
+        log("Looking for QuickTime:DateTimeOriginal fields...", "info")
+        for d in metadata:
+            try:
+                modificationdate = d["QuickTime:DateTimeOriginal"]
+                modificationdate_tz = int(datetime.strptime(modificationdate, "%Y:%m:%d %H:%M:%S%z").timestamp())
+                rendered_slomo_videos[modificationdate_tz] = d["SourceFile"]
+            except KeyError:
+                log("Couldn't find QuickTime:DateTimeOriginal field for " + d["System:FileName"] + ", will ignore", "warn")
 
     log("Matching slomo videos with corresponding rendered slomo videos...")
     videos2 = [] # id, date, video file, rendered slomo file
