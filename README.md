@@ -4,7 +4,9 @@
 
 An Apple Photos export script.
 
-**Please note that `apple-photos-export.py` has been written to fit _my_ (perhaps uncommon) use case.** *It's only been tested for photos imported into an Apple Photos library via USB from an iPhone – I haven't yet tried how importing media from other sources or using iCloud changes things. My iPhone has always been set to use the HEIC format, Live Photos have always been enabled and for HDR photos, the non-HDR variant is also stored. Lastly, I've got an iPhone 7 – so the script might not work for Portrait mode photos.* **Not much care was taken to make it particularly useful to anyone else. Most notably, it's *not an all-purpose backup tool* (I don't think one exists). Continue reading to find out what exactly it does.**
+**Please note that `apple-photos-export.py` has been written to fit _my_ (perhaps uncommon) use case.** *It's only been tested for photos imported into an Apple Photos library via USB from an iPhone – I haven't yet tried how importing media from other sources or using iCloud changes things. I don't use Apple Photos for anything else. My iPhone has always been set to use the HEIC format, Live Photos have always been enabled and for HDR photos, the non-HDR variant is also stored. Lastly, I've got an iPhone 7 – so the script might not work for Portrait mode photos.* **Not much care was taken to make it particularly useful to anyone else. Most notably, it's *not an all-purpose backup tool* (I don't think one exists). Continue reading to find out what exactly it does.**
+
+*Note that I'm stuck on Mojave, i.e. Photos 4.0, for the time being – I don't yet know if this script works on Catalina.*
 
 ---
 
@@ -181,7 +183,7 @@ Photos Library.photoslibrary
     ├── proxies/
     │   └── derivatives/  # Thumbnails.
     │       └── ...
-    ├── recovery/         # Databse backups in some weird format, I think.
+    ├── recovery/         # Database backups in some weird format, I think.
     │   ├── Info.plist
     │   ├── RKAdjustmentData/
     │   │   └── 0000000000.lij
