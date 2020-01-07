@@ -193,6 +193,12 @@ Photos Library.photoslibrary
 ```
 
 
+## Related work
+
+* https://github.com/RhetTbull/osxphotos
+* https://github.com/RhetTbull/photosmeta
+
+
 ## Future work
 
 * [ ] iCloud support.
