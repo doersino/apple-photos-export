@@ -428,7 +428,8 @@ def collect_videos():
     rendered_slomo_videos = {}
 
     mov_files = glob.iglob(VERSION + '/**/fullsizeoutput_*.mov', recursive=True)
-    if list(mov_files):
+    mov_files = list(mov_files)
+    if mov_files:
         with exif.ExifTool() as et:
             log("Batch-extracting metadata (this might take a few seconds)...", "info")
             metadata = et.get_metadata_batch(mov_files)
