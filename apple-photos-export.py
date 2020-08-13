@@ -177,6 +177,11 @@ m.UTI = 'public.png'
 AND m.filename LIKE 'IMG_%'
 """
 
+IS_SCREENRECORDING = """
+m.UTI = 'public.mpeg-4'
+AND m.filename LIKE 'RPReplay_Final_%'
+"""
+
 IS_WHATSAPP = """
 AND substr(m.filename, 9, 1) = '-'
 AND substr(m.filename, 14, 1) = '-'
@@ -606,11 +611,18 @@ def collect_insta_photos():
 def tally_other_known_media():
     log("Querying database for other known but irrelevant kinds of images...")
 
-    log("Tallying Screenshots...", "info")
+    log("Tallying screenshots...", "info")
     q = "SELECT 1 FROM RKMaster m" + pred(IS_SCREENSHOT, only_relevant_import_groups())
     screenshots = query(q)
     for l in screenshots:
         tally("ignored", "Screenshots")
+        tally("total", "Considered")
+
+    log("Tallying screen recordings...", "info")
+    q = "SELECT 1 FROM RKMaster m" + pred(IS_SCREENRECORDING, only_relevant_import_groups())
+    screenrecordings = query(q)
+    for l in screenrecordings:
+        tally("ignored", "Screen recordings")
         tally("total", "Considered")
 
     log("Tallying WhatsApp images...", "info")
@@ -638,6 +650,7 @@ def list_unknown_media():
         pnot(IS_SQUARE),
         pnot(IS_INSTA),
         pnot(IS_SCREENSHOT),
+        pnot(IS_SCREENRECORDING),
         pnot(IS_WHATSAPP_PHOTO),
         pnot(IS_WHATSAPP_VIDEO),
         only_relevant_import_groups())
