@@ -6,7 +6,9 @@ An Apple Photos export script.
 
 **Please note that `apple-photos-export.py` has been written to fit _my_ (perhaps uncommon) use case.** *It's only been tested for photos imported into an Apple Photos library via USB from an iPhone – I haven't yet tried how importing media from other sources or using iCloud changes things. I don't use Apple Photos for anything else. My iPhone has always been set to use the HEIC format, Live Photos have always been enabled and for HDR photos, the non-HDR variant is also stored. Lastly, I've got an iPhone 7 – so the script might not work for Portrait mode photos.* **Not much care was taken to make it particularly useful to anyone else. Most notably, it's *not an all-purpose backup tool* (I don't think one exists). Continue reading to find out what exactly it does.**
 
-*Note that I'm stuck on Mojave, i.e. Photos 4.0, for the time being – this script won't on Catalina or Big Sur without significant modifications. I recommend using Rhet Turnbull's [osxphotos](https://github.com/RhetTbull/osxphotos) instead (in fact, I might switch to it once I upgrade).*
+*Note that ~~I'm stuck on Mojave, i.e. Photos 4.0, for the time being –~~ this script won't on Catalina or Big Sur without significant modifications. I recommend using Rhet Turnbull's [osxphotos](https://github.com/RhetTbull/osxphotos) instead ~~(in fact, I might switch to it once I upgrade)~~.*
+
+### 🏛 **Since I've done exactly that after finally updating my operating system, I've archived this repository. Perhaps it'll continue to be useful as a reference. Cheers!**
 
 ---
 
